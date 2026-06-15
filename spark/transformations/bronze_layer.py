@@ -9,48 +9,43 @@ logger = get_logger(__name__)
 
 def process_bronze_layer(spark: SparkSession, entity_name: str) -> None:
     """
-    Bronze Layer: Converts raw JSON files to optimized Parquet format.
-
-    Operations:
-    - Enforces strict StructType schema validation.
-    - Adds audit metadata (batch_id, source_system, processed_at).
-    - Computes unique record hashes for change tracking.
-    - Implements partitioned, idempotent writes.
+    Bronze Layer: Converts raw JSON to validated Parquet.
+    Implements schema enforcement, audit metadata, and payload hashing.
     """
     try:
-        logger.info(f"Initiating Bronze layer processing for entity: {entity_name}")
+        logger.info(f"Starting Bronze processing for: {entity_name}")
 
         raw_source = f"{config.RAW_PATH}/{entity_name}"
         bronze_dest = f"{config.BRONZE_PATH}/{entity_name}"
 
-        # Validate schema existence
+        # 1. Schema Enforcement
         entity_schema = SCHEMAS.get(entity_name)
         if not entity_schema:
-            raise ValueError(f"No schema defined for entity '{entity_name}' in spark.utils.schemas")
+            raise ValueError(f"Schema not found for entity: {entity_name}")
 
-        # Load raw data with strict schema enforcement
+        # 2. Extract with strict schema
         df = spark.read.schema(entity_schema).json(raw_source)
 
         if df.count() == 0:
-            logger.warning(f"Aborting Bronze layer: No source records found at {raw_source}")
+            logger.warning(f"No records found for {entity_name} in {raw_source}")
             return
 
-        # Transform: Add operational metadata
+        # 3. Transform: Add operational metadata
         df = add_audit_metadata(df, config.BATCH_ID, config.SOURCE_SYSTEM)
 
-        # Transform: Payload hashing for data lineage and drift detection
+        # 4. Transform: Integrity hash for change tracking
         df = compute_record_hash(df)
 
-        # Transform: Partitioning metadata
+        # 5. Transform: Partitioning key
         df = df.withColumn("ingestion_date", F.to_date(F.col("processed_at")))
 
-        # Load: Scalable write operation
+        # 6. Load: Idempotent partitioned write
         df.write.mode(config.WRITE_MODE) \
             .partitionBy("ingestion_date") \
             .parquet(bronze_dest)
 
-        logger.info(f"Bronze layer processing successful. Records persisted to: {bronze_dest}")
+        logger.info(f"Bronze layer load complete for {entity_name} at {bronze_dest}")
 
     except Exception as e:
-        logger.error(f"Bronze layer processing failed for {entity_name}: {str(e)}", exc_info=True)
+        logger.error(f"Bronze layer failure for {entity_name}: {str(e)}", exc_info=True)
         raise

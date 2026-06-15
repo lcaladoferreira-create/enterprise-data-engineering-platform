@@ -1,17 +1,17 @@
-# --- Project Orchestration ---
+# --- Platform Management Interface ---
 .PHONY: help up down ps logs test lint clean init-data
 
 help:
-	@echo "Enterprise Data Platform Management"
-	@echo "------------------------------------"
-	@echo "up        : Start all local containers"
-	@echo "down      : Stop all local containers"
-	@echo "ps        : View service status"
-	@echo "logs      : Stream service logs"
-	@echo "test      : Execute Pytest suite"
-	@echo "lint      : Execute Ruff/Flake8 linting"
-	@echo "init-data : Seed raw data for pipeline kick-off"
-	@echo "clean     : Deep clean of environment and volumes"
+	@echo "Platform Management Commands"
+	@echo "----------------------------"
+	@echo "up        : Launch local services"
+	@echo "down      : Shutdown local services"
+	@echo "ps        : List running containers"
+	@echo "logs      : Follow container logs"
+	@echo "test      : Run Pytest logic verification"
+	@echo "lint      : Run Ruff/Flake8 static analysis"
+	@echo "init-data : Trigger raw data seeding"
+	@echo "clean     : Deep reset of volumes and temp data"
 
 up:
 	docker compose up -d

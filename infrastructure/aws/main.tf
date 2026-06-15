@@ -1,14 +1,14 @@
-# AWS Infrastructure - Enterprise Data Platform
+# AWS Cloud Infrastructure - Enterprise Data Platform
 
-# 1. Scalable Storage (Medallion Layers)
+# 1. Multi-layer Data Lake Storage
 resource "aws_s3_bucket" "medallion_storage" {
   for_each = toset(["raw", "bronze", "silver", "gold"])
   bucket   = "enterprise-datalake-${each.key}-${var.environment}"
 
   tags = {
-    Layer       = each.key
-    Environment = var.environment
     Platform    = "DataEngineering"
+    Environment = var.environment
+    ManagedBy   = "Terraform"
   }
 }
 
@@ -31,9 +31,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "storage_encryptio
   }
 }
 
-# 2. Managed Compute (Glue Spark Jobs)
+# 2. Serverless Spark Compute (Glue)
 resource "aws_iam_role" "glue_service_role" {
-  name = "EnterpriseGlueRole-${var.environment}"
+  name = "EnterpriseGlueExecutionRole-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -45,12 +45,12 @@ resource "aws_iam_role" "glue_service_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "glue_service_attachment" {
+resource "aws_iam_role_policy_attachment" "glue_policy" {
   role       = aws_iam_role.glue_service_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
 }
 
-resource "aws_glue_job" "medallion_processing" {
+resource "aws_glue_job" "batch_processing_job" {
   name     = "enterprise-medallion-pipeline"
   role_arn = aws_iam_role.glue_service_role.arn
 
@@ -60,23 +60,23 @@ resource "aws_glue_job" "medallion_processing" {
   }
 
   default_arguments = {
-    "--job-language"        = "python"
-    "--continuous-log-logGroup" = "/aws-glue/jobs/enterprise-data-pipeline"
-    "--enable-metrics"      = "true"
+    "--job-language"            = "python"
+    "--continuous-log-logGroup" = "/aws-glue/jobs/enterprise-medallion"
+    "--enable-metrics"          = "true"
   }
 
-  max_retries = 2
-  timeout     = 2880
+  max_retries = 1
+  timeout     = 1440
 }
 
-# 3. Secret Management
-resource "aws_secretsmanager_secret" "database_credentials" {
-  name = "enterprise/data-platform/${var.environment}/db-creds"
-  description = "Managed database credentials for ingestion"
+# 3. Secure Secret Storage
+resource "aws_secretsmanager_secret" "ingestion_secrets" {
+  name        = "enterprise/data-platform/${var.environment}/credentials"
+  description = "Managed secrets for source database connections"
 }
 
-# 4. Observability
-resource "aws_cloudwatch_log_group" "pipeline_logs" {
-  name              = "/enterprise/data-platform/pipeline-execution"
-  retention_in_days = 90
+# 4. Centralized Observability
+resource "aws_cloudwatch_log_group" "processing_logs" {
+  name              = "/enterprise/data-platform/execution"
+  retention_in_days = 60
 }

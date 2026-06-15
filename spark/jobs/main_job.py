@@ -10,11 +10,11 @@ logger = get_logger(__name__)
 
 def main():
     """
-    Main entry point for the Enterprise Data Pipeline Spark application.
-    Orchestrates Bronze, Silver, and Gold processing layers.
+    Enterprise Data Pipeline Orchestrator.
+    Handles the execution flow for Bronze, Silver, and Gold layers.
     """
     if len(sys.argv) < 2:
-        logger.error("Missing mandatory arguments. Usage: main_job.py <layer> [entity]")
+        logger.error("Usage: main_job.py <layer> [entity]")
         sys.exit(1)
 
     layer = sys.argv[1]
@@ -28,18 +28,18 @@ def main():
     try:
         if layer == "bronze":
             if len(sys.argv) < 3:
-                logger.error("Bronze layer requires an entity name argument.")
+                logger.error("Bronze layer execution requires an entity argument.")
                 sys.exit(1)
             entity = sys.argv[2]
             process_bronze_layer(spark, entity)
 
         elif layer == "silver":
             if len(sys.argv) < 3:
-                logger.error("Silver layer requires an entity name argument.")
+                logger.error("Silver layer execution requires an entity argument.")
                 sys.exit(1)
             entity = sys.argv[2]
 
-            # Configuration for entities
+            # Entity specific configuration for deduplication and quality
             configs = {
                 "customers": {
                     "pk": "customer_id",
@@ -80,13 +80,13 @@ def main():
             create_gold_star_schema(spark)
 
         else:
-            logger.error(f"Unsupported processing layer: {layer}")
+            logger.error(f"Unsupported layer: {layer}")
             sys.exit(1)
 
-        logger.info(f"Pipeline execution for layer '{layer}' completed successfully.")
+        logger.info(f"Successfully completed processing for layer: {layer}")
 
     except Exception as e:
-        logger.error(f"Critical failure in pipeline job: {str(e)}", exc_info=True)
+        logger.error(f"Pipeline failure in layer {layer}: {str(e)}", exc_info=True)
         sys.exit(1)
     finally:
         spark.stop()

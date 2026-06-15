@@ -1,5 +1,5 @@
 services:
-  # --- Transactional Storage (PostgreSQL) ---
+  # --- Relational Sources ---
   postgres-source:
     image: postgres:15
     container_name: postgres-source
@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin_password}
       POSTGRES_DB: ${POSTGRES_DB:-transactional_db}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "5432:5432"
     volumes:
       - ./databases/postgres:/docker-entrypoint-initdb.d
     healthcheck:
@@ -19,7 +19,6 @@ services:
     networks:
       - data-platform-net
 
-  # --- Billing Storage (MySQL) ---
   mysql-source:
     image: mysql:8.0
     container_name: mysql-source
@@ -29,18 +28,18 @@ services:
       MYSQL_USER: ${MYSQL_USER:-admin}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-admin_password}
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      - "3306:3306"
     volumes:
       - ./databases/mysql:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - data-platform-net
 
-  # --- Catalog Storage (MongoDB) ---
+  # --- NoSQL Sources ---
   mongodb-source:
     image: mongo:6.0
     container_name: mongodb-source
@@ -49,7 +48,7 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-admin_password}
       MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-catalog_db}
     ports:
-      - "${MONGODB_PORT:-27017}:27017"
+      - "27017:27017"
     volumes:
       - ./databases/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
     healthcheck:
@@ -60,14 +59,13 @@ services:
     networks:
       - data-platform-net
 
-  # --- Event Storage (Cassandra) ---
   cassandra-source:
     image: cassandra:4.1
     container_name: cassandra-source
     environment:
       CASSANDRA_CLUSTER_NAME: "EventCluster"
     ports:
-      - "${CASSANDRA_PORT:-9042}:9042"
+      - "9042:9042"
     volumes:
       - ./databases/cassandra:/docker-entrypoint-initdb.d
     healthcheck:
@@ -78,7 +76,7 @@ services:
     networks:
       - data-platform-net
 
-  # --- Orchestration (Airflow) ---
+  # --- Orchestration ---
   airflow-db:
     image: postgres:15
     container_name: airflow-db
@@ -146,7 +144,7 @@ services:
     networks:
       - data-platform-net
 
-  # --- Data Processing (Spark) ---
+  # --- Processing ---
   spark-master:
     image: bitnami/spark:3.4.1
     container_name: spark-master

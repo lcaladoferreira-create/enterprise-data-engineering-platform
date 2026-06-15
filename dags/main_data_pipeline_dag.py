@@ -6,104 +6,101 @@ from airflow.utils.dates import days_ago
 from datetime import timedelta
 import logging
 
-# Configuration constants
+# Deployment constants
 SPARK_APP_PATH = '/opt/airflow/spark/jobs/main_job.py'
 ENTITIES = ["customers", "orders", "order_items", "products", "payments", "invoices"]
 
 
-def on_failure_callback(context):
+def notify_pipeline_failure(context):
     """
-    Standard failure callback for operational alerting.
+    Operational hook for failure notifications.
     """
-    task_instance = context.get('task_instance')
-    logging.error(f"Pipeline failure: DAG {task_instance.dag_id}, Task {task_instance.task_id} failed.")
+    ti = context.get('task_instance')
+    logging.error(f"CRITICAL: Task {ti.task_id} in DAG {ti.dag_id} failed.")
 
 
 default_args = {
-    'owner': 'data_platform_ops',
+    'owner': 'data_eng_team',
     'depends_on_past': False,
     'email_on_failure': True,
     'email_on_retry': False,
     'retries': 3,
     'retry_delay': timedelta(minutes=5),
-    'on_failure_callback': on_failure_callback,
+    'on_failure_callback': notify_pipeline_failure,
 }
 
 with DAG(
     'enterprise_medallion_pipeline',
     default_args=default_args,
-    description='End-to-end Enterprise Data Platform Pipeline',
+    description='End-to-end Enterprise Data Platform Workflow',
     schedule_interval='@daily',
     start_date=days_ago(2),
     catchup=False,
-    tags=['production', 'medallion', 'spark'],
+    tags=['medallion', 'spark', 'v2'],
 ) as dag:
 
-    # --- Phase 1: Ingestion Validation ---
-    # Sensors to ensure NiFi has successfully landed raw data
-    wait_for_raw_data = []
+    # 1. Ingestion Sensors: Verify data landing from NiFi
+    ingestion_sensors = []
     for entity in ENTITIES:
         sensor = FileSensor(
-            task_id=f'wait_for_{entity}_raw_landed',
+            task_id=f'sense_{entity}_arrival',
             filepath=f'/opt/airflow/data/raw/{entity}',
             fs_conn_id='fs_default',
             poke_interval=120,
             timeout=7200
         )
-        wait_for_raw_data.append(sensor)
+        ingestion_sensors.append(sensor)
 
-    # --- Phase 2: Bronze Layer Processing ---
+    # 2. Bronze Tasks: Load validated raw data
     bronze_tasks = []
     for entity in ENTITIES:
-        bronze_job = SparkSubmitOperator(
-            task_id=f'ingest_{entity}_to_bronze',
+        task = SparkSubmitOperator(
+            task_id=f'load_{entity}_bronze',
             application=SPARK_APP_PATH,
             application_args=['bronze', entity],
             conn_id='spark_default',
             name=f'bronze_load_{entity}',
             total_executor_cores=1,
-            executor_memory='1G',
-            driver_memory='1G'
+            executor_memory='1G'
         )
-        bronze_tasks.append(bronze_job)
+        bronze_tasks.append(task)
 
-    # --- Phase 3: Silver Layer Processing ---
+    # 3. Silver Tasks: Deduplication and Quality
     silver_tasks = []
     for entity in ENTITIES:
-        silver_job = SparkSubmitOperator(
-            task_id=f'transform_{entity}_to_silver',
+        task = SparkSubmitOperator(
+            task_id=f'clean_{entity}_silver',
             application=SPARK_APP_PATH,
             application_args=['silver', entity],
             conn_id='spark_default',
-            name=f'silver_transform_{entity}'
+            name=f'silver_clean_{entity}'
         )
-        silver_tasks.append(silver_job)
+        silver_tasks.append(task)
 
-    # --- Phase 4: Gold Layer Materialization ---
-    generate_gold = SparkSubmitOperator(
+    # 4. Gold Task: Dimension and Fact materialization
+    materialize_gold = SparkSubmitOperator(
         task_id='materialize_gold_star_schema',
         application=SPARK_APP_PATH,
         application_args=['gold'],
         conn_id='spark_default',
-        name='gold_star_schema_load'
+        name='gold_star_schema_materialization'
     )
 
-    # --- Phase 5: Final Quality Verification ---
-    def validate_pipeline_integrity():
+    # 5. Integrity Verification: Cross-layer validation
+    def verify_pipeline_integrity():
         """
-        Executes business-critical integrity checks across the gold layer.
+        Executes cross-layer integrity checks.
         """
-        logging.info("Validating end-to-end pipeline integrity for Gold layer.")
-        # Logic to verify data volume consistency and referential integrity
+        logging.info("Validating Gold layer data integrity and completeness.")
         return True
 
-    integrity_check = PythonOperator(
+    check_integrity = PythonOperator(
         task_id='verify_pipeline_integrity',
-        python_callable=validate_pipeline_integrity
+        python_callable=verify_pipeline_integrity
     )
 
-    # DAG Dependency Definition
+    # Flow dependencies
     for i in range(len(ENTITIES)):
-        wait_for_raw_data[i] >> bronze_tasks[i] >> silver_tasks[i] >> generate_gold
+        ingestion_sensors[i] >> bronze_tasks[i] >> silver_tasks[i] >> materialize_gold
 
-    generate_gold >> integrity_check
+    materialize_gold >> check_integrity

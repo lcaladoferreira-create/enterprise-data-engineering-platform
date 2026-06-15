@@ -17,55 +17,48 @@ def process_silver_layer(
     silver_path: str = None
 ) -> None:
     """
-    Silver Layer: Implementation of cleaning, deduplication, and data quality standards.
-
-    Operations:
-    - Primary Key based deduplication keeping latest metadata.
-    - Data Quality enforcement using a Quarantine pattern.
-    - String standardization (trimming, case normalization).
-    - Hashing of PII fields (GDPR/LGPD compliance).
+    Silver Layer: Deduplication, Cleaning, and Security.
+    Implements a quarantine pattern for DQ failures and PII masking.
     """
     try:
-        logger.info(f"Initiating Silver layer processing for entity: {entity_name}")
+        logger.info(f"Starting Silver processing for: {entity_name}")
 
-        bronze_source = bronze_path if bronze_path else f"{config.BRONZE_PATH}/{entity_name}"
-        silver_dest = silver_path if silver_path else f"{config.SILVER_PATH}/{entity_name}"
-        quarantine_dest = f"{config.SILVER_PATH}/quarantine/{entity_name}"
+        bronze_src = bronze_path if bronze_path else f"{config.BRONZE_PATH}/{entity_name}"
+        silver_dst = silver_path if silver_path else f"{config.SILVER_PATH}/{entity_name}"
+        quarantine_dst = f"{config.SILVER_PATH}/quarantine/{entity_name}"
 
-        df = spark.read.parquet(bronze_source)
+        df = spark.read.parquet(bronze_src)
 
-        # 1. Deduplication: Keep the most recent record version based on audit timestamp
+        # 1. Deduplication: Keep latest record based on processing timestamp
         window_spec = Window.partitionBy(pk_col).orderBy(F.col("processed_at").desc())
         df = df.withColumn("row_num", F.row_number().over(window_spec)) \
                .filter(F.col("row_num") == 1) \
                .drop("row_num")
 
-        # 2. Data Quality: Enforce critical column constraints
+        # 2. Data Quality: Quarantine records with nulls in critical columns
         if critical_cols:
             df = check_nulls(df, critical_cols)
 
-            # Action: Quarantine records failing validation
             quarantine_df = df.filter(F.col("dq_failed"))
             if quarantine_df.count() > 0:
-                logger.warning(f"Isolating {quarantine_df.count()} failed records to quarantine.")
-                quarantine_df.write.mode("append").parquet(quarantine_dest)
+                logger.warning(f"Moving {quarantine_df.count()} records to quarantine for {entity_name}")
+                quarantine_df.write.mode("append").parquet(quarantine_dst)
 
-            # Proceed only with valid records
             df = df.filter(~F.col("dq_failed")).drop("dq_failed", "dq_reason")
 
-        # 3. Standardization: Standardizing string representations
+        # 3. Cleaning: Standardize string fields
         for col_name, dtype in df.dtypes:
             if dtype == "string":
                 df = df.withColumn(col_name, F.trim(F.col(col_name)))
 
-        # 4. Security: Anonymize sensitive fields
+        # 4. Security: Anonymize PII for compliance
         if pii_cols:
             df = mask_pii(df, pii_cols)
 
-        # Persistence
-        df.write.mode(config.WRITE_MODE).parquet(silver_dest)
-        logger.info(f"Silver layer processing successful for {entity_name}.")
+        # 5. Load
+        df.write.mode(config.WRITE_MODE).parquet(silver_dst)
+        logger.info(f"Silver layer load complete for {entity_name}")
 
     except Exception as e:
-        logger.error(f"Silver layer processing failed for {entity_name}: {str(e)}", exc_info=True)
+        logger.error(f"Silver layer failure for {entity_name}: {str(e)}", exc_info=True)
         raise
