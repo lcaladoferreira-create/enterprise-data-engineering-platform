@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.pytest_cache/
+
+# Databases & Data
+data/raw/*
+data/bronze/*
+data/silver/*
+data/gold/*
+!data/samples/
+!data/**/.gitkeep
+
+# Environment
+.env
+.envrc
+
+# IDEs
+.vscode/
+.idea/
+
+# Docker/Airflow
+logs/
+airflow_logs/
+*.log
