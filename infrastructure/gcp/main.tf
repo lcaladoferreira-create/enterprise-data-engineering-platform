@@ -1,49 +1,67 @@
-# GCP Infrastructure for Data Engineering Platform
+# GCP Infrastructure - Enterprise Data Platform
 
-provider "google" {
-  project = var.project_id
-  region  = var.region
-}
-
-# 1. GCS Buckets (Medallion Architecture)
-resource "google_storage_bucket" "datalake" {
+# 1. Cloud Storage for Data Lake
+resource "google_storage_bucket" "datalake_buckets" {
   for_each      = toset(["raw", "bronze", "silver", "gold"])
   name          = "enterprise-datalake-${each.key}-${var.environment}"
   location      = var.region
-  force_destroy = true
+  force_destroy = false
 
   uniform_bucket_level_access = true
+
+  versioning {
+    enabled = true
+  }
+
+  encryption {
+    default_kms_key_name = google_kms_crypto_key.storage_key.id
+  }
 }
 
-# 2. BigQuery Datasets for Gold Layer
-resource "google_bigquery_dataset" "gold_layer" {
-  dataset_id                  = "gold_star_schema"
-  friendly_name               = "Gold Layer Star Schema"
-  description                 = "Curated analytical tables for reporting"
+# 2. BigQuery Serving Layer (Gold)
+resource "google_bigquery_dataset" "serving_layer" {
+  dataset_id                  = "enterprise_gold_layer"
+  friendly_name               = "Enterprise Serving Layer"
+  description                 = "Curated analytical marts for downstream consumption"
   location                    = var.region
+  delete_contents_on_destroy = false
 }
 
-# 3. Cloud Dataproc Cluster for Spark
+# 3. Cloud Dataproc (Managed Spark Cluster)
 resource "google_dataproc_cluster" "spark_cluster" {
-  name   = "data-engineering-cluster-${var.environment}"
+  name   = "enterprise-data-cluster-${var.environment}"
   region = var.region
 
   cluster_config {
     master_config {
       num_instances = 1
-      machine_type  = "n1-standard-2"
+      machine_type  = "n1-standard-4"
     }
+
     worker_config {
       num_instances = 2
-      machine_type  = "n1-standard-2"
+      machine_type  = "n1-standard-4"
+      disk_config {
+        boot_disk_size_gb = 100
+      }
+    }
+
+    software_config {
+      image_version = "2.1-debian11"
+      override_properties = {
+        "dataproc:dataproc.allow.zero.workers" = "false"
+      }
     }
   }
 }
 
-# 4. Secret Manager for Credentials
-resource "google_secret_manager_secret" "db_password" {
-  secret_id = "source-db-password"
-  replication {
-    automatic = true
-  }
+# 4. Security (KMS)
+resource "google_kms_key_ring" "keyring" {
+  name     = "enterprise-data-keyring"
+  location = var.region
+}
+
+resource "google_kms_crypto_key" "storage_key" {
+  name     = "storage-encryption-key"
+  key_ring = google_kms_key_ring.keyring.id
 }

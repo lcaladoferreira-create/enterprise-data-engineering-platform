@@ -1,67 +1,82 @@
-# AWS Infrastructure for Data Engineering Platform
+# AWS Infrastructure - Enterprise Data Platform
 
-provider "aws" {
-  region = var.aws_region
-}
-
-# 1. S3 Data Lake Buckets (Medallion Architecture)
-resource "aws_s3_bucket" "datalake" {
+# 1. Scalable Storage (Medallion Layers)
+resource "aws_s3_bucket" "medallion_storage" {
   for_each = toset(["raw", "bronze", "silver", "gold"])
   bucket   = "enterprise-datalake-${each.key}-${var.environment}"
+
+  tags = {
+    Layer       = each.key
+    Environment = var.environment
+    Platform    = "DataEngineering"
+  }
 }
 
-resource "aws_s3_bucket_public_access_block" "datalake_lockdown" {
-  for_each = aws_s3_bucket.datalake
+resource "aws_s3_bucket_versioning" "storage_versioning" {
+  for_each = aws_s3_bucket.medallion_storage
+  bucket   = each.value.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "storage_encryption" {
+  for_each = aws_s3_bucket.medallion_storage
   bucket   = each.value.id
 
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
 }
 
-# 2. IAM Role for Spark Processing (Glue/EMR)
-resource "aws_iam_role" "spark_role" {
-  name = "DataEngineeringSparkRole-${var.environment}"
+# 2. Managed Compute (Glue Spark Jobs)
+resource "aws_iam_role" "glue_service_role" {
+  name = "EnterpriseGlueRole-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = ["glue.amazonaws.com", "elasticmapreduce.amazonaws.com"]
-        }
-      }
-    ]
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "glue.amazonaws.com" }
+    }]
   })
 }
 
-# 3. AWS Glue Job for Batch Processing
-resource "aws_glue_job" "medallion_transformation" {
-  name     = "medallion-transformation-job"
-  role_arn = aws_iam_role.spark_role.arn
+resource "aws_iam_role_policy_attachment" "glue_service_attachment" {
+  role       = aws_iam_role.glue_service_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
+}
+
+resource "aws_glue_job" "medallion_processing" {
+  name     = "enterprise-medallion-pipeline"
+  role_arn = aws_iam_role.glue_service_role.arn
 
   command {
-    script_location = "s3://${aws_s3_bucket.datalake["raw"].id}/scripts/main_job.py"
+    script_location = "s3://${aws_s3_bucket.medallion_storage["raw"].id}/scripts/main_job.py"
     python_version  = "3"
   }
 
   default_arguments = {
     "--job-language"        = "python"
-    "--continuous-log-logGroup" = "/aws-glue/jobs/medallion-transformation"
+    "--continuous-log-logGroup" = "/aws-glue/jobs/enterprise-data-pipeline"
     "--enable-metrics"      = "true"
   }
+
+  max_retries = 2
+  timeout     = 2880
 }
 
-# 4. AWS Secrets Manager for DB Credentials
-resource "aws_secretsmanager_secret" "db_creds" {
-  name = "enterprise/data-platform/db-credentials"
+# 3. Secret Management
+resource "aws_secretsmanager_secret" "database_credentials" {
+  name = "enterprise/data-platform/${var.environment}/db-creds"
+  description = "Managed database credentials for ingestion"
 }
 
-# 5. CloudWatch Log Group
+# 4. Observability
 resource "aws_cloudwatch_log_group" "pipeline_logs" {
-  name              = "/enterprise/data-platform/pipeline"
-  retention_in_days = 30
+  name              = "/enterprise/data-platform/pipeline-execution"
+  retention_in_days = 90
 }

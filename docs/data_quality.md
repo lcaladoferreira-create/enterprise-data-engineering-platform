@@ -1,30 +1,24 @@
-# Data Quality Strategy
+# Enterprise Data Quality Standards
 
-Data quality is a first-class citizen in the platform, integrated at every layer of the Medallion architecture.
+This document specifies the Data Quality (DQ) framework integrated into the Medallion architecture.
 
-## 1. Automated Checks in Pipeline
+## 1. Governance Principles
+- **Schema First**: Every ingestion task in the Bronze layer enforces a pre-defined Spark StructType.
+- **Fail-Fast**: Critical nulls in the Silver layer trigger immediate record isolation.
+- **Traceability**: Every record carries a `batch_id` and a `record_hash` (SHA-256) of its raw payload.
 
-*   **Schema Enforcement**: Spark jobs fail if the incoming raw data deviates from the expected schema in the Bronze layer.
-*   **Null Validation**: Critical columns (e.g., `customer_id`, `total_amount`) are checked in the Silver layer.
-*   **Uniqueness**: The Silver layer transformation enforces deduplication using Window functions.
+## 2. Automated DQ Pattern: The Quarantine
+Records failing validation are moved to a specific location for operational investigation:
+- **Storage**: `data/silver/quarantine/{entity}/`
+- **Metadata**: Fails carry a `dq_failed=True` flag and a `dq_reason` description.
 
-## 2. Quarantine Pattern
+## 3. Business Rule Validations
+- **Relational Integrity**: Gold layer Fact tables are validated against Dimensions to ensure no orphaned keys.
+- **Financial Reconciliation**: Sum of daily payments is reconciled against daily order totals in the `mart_payment_reconciliation`.
+- **Deduplication**: Silver layer applies PK-based deduplication using Window functions to maintain a Type 1 record state.
 
-Records that fail critical validation are not dropped. Instead, they are routed to a **Quarantine** zone:
-*   Path: `data/silver/quarantine/{entity}`
-*   Included metadata: `dq_failed=True`, `dq_reason="Missing critical values"`.
-*   Operational impact: Alerts are triggered if quarantine volume exceeds 1% of the batch.
-
-## 3. Post-Processing Validation
-
-The Airflow DAG includes a `validate_gold_quality` task that runs SQL-based checks:
-*   **Referential Integrity**: Checks for orphaned orders (orders without valid customers).
-*   **Financial Reconciliation**: Ensures `total_amount` in `fact_orders` matches the sum of items/payments.
-*   **Volume Anomalies**: Checks if the record count is significantly higher/lower than the 7-day average.
-
-## 4. Monitoring DQ Metrics
-
-Quality metrics are logged in JSON format and can be visualized:
-*   Total Records Processed.
-*   Pass/Fail Ratio.
-*   Common failure reasons per source system.
+## 4. Operational Monitoring
+The Airflow `verify_pipeline_integrity` task executes final SQL-based validations after the Gold layer is materialized. Alerts are configured for:
+- Variance in financial totals.
+- Unexpected zero-volume batches.
+- High quarantine ratio (>5% of batch).

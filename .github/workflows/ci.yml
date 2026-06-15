@@ -1,4 +1,4 @@
-name: CI
+name: Enterprise Data Platform CI
 
 on:
   push:
@@ -7,34 +7,56 @@ on:
     branches: [ main ]
 
 jobs:
-  validate:
+  python-quality:
+    name: Python Quality & Logic
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Python
+      - name: Set up Python 3.9
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
-      - name: Install dependencies
+      - name: Install Logic dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pytest pyspark
+          pip install ruff pytest pyspark flake8
 
-      - name: Compile Python
-        run: python -m compileall dags spark scripts tests
-
-      - name: Lint with Ruff
+      - name: Static Analysis (Ruff)
         run: ruff check .
 
-      - name: Run Tests
+      - name: Complexity & Style (Flake8)
+        run: flake8 . --count --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Byte-code Compilation
+        run: python -m compileall dags spark scripts tests
+
+      - name: Logic Verification (Pytest)
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
           pytest tests/
 
-      - name: Validate Docker Compose
-        run: docker-compose config
+  infrastructure-quality:
+    name: Infrastructure Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
 
-      - name: Build Docker images
-        run: docker-compose build
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive infrastructure
+
+  container-quality:
+    name: Container & Orchestration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Docker Compose Validation
+        run: docker compose config
+
+      - name: Docker Build Dry-run
+        run: docker compose build

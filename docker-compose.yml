@@ -1,30 +1,5 @@
-version: '3.8'
-
-x-airflow-common:
-  &airflow-common
-  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.7.1}
-  environment:
-    &airflow-common-env
-    AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
-    AIRFLOW__CORE__FERNET_KEY: ''
-    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
-    _PIP_ADDITIONAL_DEPENDENCIES: 'apache-airflow-providers-apache-spark pyspark pymongo cassandra-driver'
-  volumes:
-    - ./dags:/opt/airflow/dags
-    - ./spark:/opt/airflow/spark
-    - ./data:/opt/airflow/data
-    - ./logs:/opt/airflow/logs
-    - ./config:/opt/airflow/config
-  user: "${AIRFLOW_UID:-1000}:0"
-  depends_on:
-    airflow-db:
-      condition: service_healthy
-
 services:
-  # --- Source Databases ---
+  # --- Transactional Storage (PostgreSQL) ---
   postgres-source:
     image: postgres:15
     container_name: postgres-source
@@ -44,6 +19,7 @@ services:
     networks:
       - data-platform-net
 
+  # --- Billing Storage (MySQL) ---
   mysql-source:
     image: mysql:8.0
     container_name: mysql-source
@@ -64,6 +40,7 @@ services:
     networks:
       - data-platform-net
 
+  # --- Catalog Storage (MongoDB) ---
   mongodb-source:
     image: mongo:6.0
     container_name: mongodb-source
@@ -75,22 +52,33 @@ services:
       - "${MONGODB_PORT:-27017}:27017"
     volumes:
       - ./databases/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - data-platform-net
 
+  # --- Event Storage (Cassandra) ---
   cassandra-source:
     image: cassandra:4.1
     container_name: cassandra-source
-    ports:
-      - "${CASSANDRA_PORT:-9042}:9042"
     environment:
       CASSANDRA_CLUSTER_NAME: "EventCluster"
+    ports:
+      - "${CASSANDRA_PORT:-9042}:9042"
     volumes:
       - ./databases/cassandra:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
     networks:
       - data-platform-net
 
-  # --- Orchestration ---
+  # --- Orchestration (Airflow) ---
   airflow-db:
     image: postgres:15
     container_name: airflow-db
@@ -107,27 +95,58 @@ services:
       - data-platform-net
 
   airflow-webserver:
-    <<: *airflow-common
-    command: webserver
+    image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.7.1}
     container_name: airflow-webserver
+    command: webserver
     ports:
       - "8080:8080"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      _PIP_ADDITIONAL_DEPENDENCIES: 'apache-airflow-providers-apache-spark pyspark pymongo cassandra-driver'
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./spark:/opt/airflow/spark
+      - ./data:/opt/airflow/data
+      - ./logs:/opt/airflow/logs
+      - ./config:/opt/airflow/config
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 10s
       timeout: 10s
       retries: 5
+    depends_on:
+      airflow-db:
+        condition: service_healthy
     networks:
       - data-platform-net
 
   airflow-scheduler:
-    <<: *airflow-common
-    command: scheduler
+    image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.7.1}
     container_name: airflow-scheduler
+    command: scheduler
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      _PIP_ADDITIONAL_DEPENDENCIES: 'apache-airflow-providers-apache-spark pyspark pymongo cassandra-driver'
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./spark:/opt/airflow/spark
+      - ./data:/opt/airflow/data
+      - ./logs:/opt/airflow/logs
+      - ./config:/opt/airflow/config
+    depends_on:
+      airflow-db:
+        condition: service_healthy
     networks:
       - data-platform-net
 
-  # --- Processing ---
+  # --- Data Processing (Spark) ---
   spark-master:
     image: bitnami/spark:3.4.1
     container_name: spark-master

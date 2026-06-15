@@ -1,39 +1,42 @@
-.PHONY: help up down ps logs test lint clean shell-airflow shell-spark
+# --- Project Orchestration ---
+.PHONY: help up down ps logs test lint clean init-data
 
 help:
-	@echo "Available commands:"
-	@echo "  up             - Start all services with docker-compose"
-	@echo "  down           - Stop all services"
-	@echo "  ps             - Show running services"
-	@echo "  logs           - Follow all logs"
-	@echo "  test           - Run all tests using pytest"
-	@echo "  lint           - Run flake8 linting"
-	@echo "  clean          - Remove temp files and containers"
-	@echo "  init-data      - Run scripts to initialize sample data"
+	@echo "Enterprise Data Platform Management"
+	@echo "------------------------------------"
+	@echo "up        : Start all local containers"
+	@echo "down      : Stop all local containers"
+	@echo "ps        : View service status"
+	@echo "logs      : Stream service logs"
+	@echo "test      : Execute Pytest suite"
+	@echo "lint      : Execute Ruff/Flake8 linting"
+	@echo "init-data : Seed raw data for pipeline kick-off"
+	@echo "clean     : Deep clean of environment and volumes"
 
 up:
-	docker-compose up -d
+	docker compose up -d
 
 down:
-	docker-compose down
+	docker compose down
 
 ps:
-	docker-compose ps
+	docker compose ps
 
 logs:
-	docker-compose logs -f
+	docker compose logs -f
 
 test:
-	pytest tests/
+	export PYTHONPATH=$${PYTHONPATH}:$(shell pwd) && pytest tests/
 
 lint:
+	ruff check .
 	flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-	flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
 clean:
+	docker compose down -v --remove-orphans
 	find . -type d -name "__pycache__" -exec rm -rf {} +
-	find . -type f -name "*.pyc" -delete
-	docker-compose down -v --remove-orphans
+	rm -rf .pytest_cache
+	rm -rf data/bronze/* data/silver/* data/gold/*
 
 init-data:
 	python3 scripts/seed_data.py

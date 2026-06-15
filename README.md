@@ -1,15 +1,17 @@
 # Enterprise Multi-Cloud Data Engineering Platform
 
-A professional-grade, end-to-end data engineering platform implementing the **Medallion Architecture** (Raw -> Bronze -> Silver -> Gold) with multi-cloud deployment capabilities.
+A mission-critical data engineering platform demonstrating the **Medallion Architecture**, automated **Data Quality** patterns, and **Multi-Cloud** infrastructure.
 
-## Architecture Overview
+## Platform Core
 
-The platform is designed to handle high-volume batch data processing using modern tools and best practices.
+This platform provides a robust foundation for scalable data processing, transforming fragmented source data from relational and NoSQL systems into high-value analytical marts.
 
-*   **Ingestion Layer**: Apache NiFi extracts data from PostgreSQL, MySQL, MongoDB, and Cassandra into a Raw landing zone.
-*   **Orchestration Layer**: Apache Airflow manages complex DAGs with sensors, retries, and failure callbacks.
-*   **Processing Layer**: Apache Spark (PySpark) performs scalable transformations across data layers.
-*   **Storage Layer**: Parquet-based Data Lake with a Star Schema in the Gold layer.
+*   **Ingestion**: High-availability pipeline moving data from PostgreSQL, MySQL, MongoDB, and Cassandra.
+*   **Orchestration**: Production-grade Airflow DAGs with sensors, automated retries, and comprehensive error handling.
+*   **Transformation**: Modular PySpark framework enforcing schemas, masking PII, and generating a Star Schema.
+*   **Infrastructure**: Fully-defined Terraform modules for AWS, GCP, and Azure environments.
+
+## System Architecture
 
 ```mermaid
 graph LR
@@ -24,28 +26,27 @@ graph LR
     Spark -. Processes .-> Medallion
 ```
 
-## Documentation
+## Engineering Documentation
 
-*   [Local Setup Guide](docs/local_setup.md)
-*   [Medallion Architecture Details](docs/architecture.md)
-*   [Cloud Deployment: AWS](docs/cloud_deployment_aws.md)
-*   [Cloud Deployment: GCP](docs/cloud_deployment_gcp.md)
-*   [Cloud Deployment: Azure](docs/cloud_deployment_azure.md)
-*   [Data Model (Star Schema)](docs/data_model.md)
-*   [Security & Compliance (GDPR/LGPD)](docs/security_compliance.md)
-*   [Data Quality Strategy](docs/data_quality.md)
-*   [Operations Runbook](docs/operations_runbook.md)
-*   [Production Hardening Checklist](docs/production_hardening_checklist.md)
+*   [Deployment: Local Development](docs/local_setup.md)
+*   [Architecture: Medallion Flow](docs/architecture.md)
+*   [Cloud Infrastructure: AWS](docs/cloud_deployment_aws.md)
+*   [Cloud Infrastructure: GCP](docs/cloud_deployment_gcp.md)
+*   [Cloud Infrastructure: Azure](docs/cloud_deployment_azure.md)
+*   [Data Governance: Model & Star Schema](docs/data_model.md)
+*   [Security & Compliance: GDPR/LGPD](docs/security_compliance.md)
+*   [Operational Excellence: Data Quality](docs/data_quality.md)
+*   [SRE: Operations Runbook](docs/operations_runbook.md)
+*   [Production Hardening Roadmap](docs/production_hardening_checklist.md)
 
-## Key Technical Features
+## Key Technical Specifications
 
-*   **Production Spark Jobs**: Type-hinted, structured logging, schema enforcement, and idempotent partitioning.
-*   **Star Schema**: Implements `dim_customers`, `dim_products`, `fact_orders`, and analytical marts.
-*   **Data Quality**: Quarantine pattern for failed records, null checks, and referential integrity.
-*   **PII Masking**: GDPR-compliant SHA-256 hashing for sensitive fields.
-*   **Multi-Cloud IaC**: Actual Terraform modules for AWS, GCP, and Azure.
-*   **CI/CD**: Comprehensive GitHub Actions workflow with linting and automated tests.
+*   **Idempotency**: All Spark jobs use `dynamic` partition overwrite mode to ensure safe re-runs.
+*   **Schema Enforcement**: Bronze layer implements strict Spark `StructType` validation.
+*   **Security**: SHA-256 PII masking for sensitive fields (Email, Phone) at the Silver layer.
+*   **Scalability**: Native partitioning strategy by `ingestion_date`.
+*   **Quality**: Quarantine pattern for isolating failed records without breaking the pipeline.
 
 ## Getting Started
 
-Refer to the [Local Setup Guide](docs/local_setup.md) to spin up the platform using Docker Compose and initialize the sample datasets.
+Consult the [Local Setup Guide](docs/local_setup.md) to initialize the platform on your development machine.
