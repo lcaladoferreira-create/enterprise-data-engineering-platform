@@ -2,9 +2,12 @@ from airflow import DAG
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.sensors.filesystem import FileSensor
 from airflow.operators.python import PythonOperator
+from airflow.exceptions import AirflowException
 from airflow.utils.dates import days_ago
 from datetime import timedelta
 import logging
+import glob
+import pandas as pd
 
 # Deployment constants
 SPARK_APP_PATH = '/opt/airflow/spark/jobs/main_job.py'
@@ -17,6 +20,55 @@ def notify_pipeline_failure(context):
     """
     ti = context.get('task_instance')
     logging.error(f"CRITICAL: Task {ti.task_id} in DAG {ti.dag_id} failed.")
+
+
+def verify_pipeline_integrity(**kwargs):
+    """
+    Reads record counts from bronze, silver, and gold layers and validates consistency.
+    Raises AirflowException if critical thresholds are not met.
+    """
+    logging.info("Starting production integrity verification.")
+
+    # Paths to the materialized parquet files
+    # Note: In production these would be S3/GCS paths
+    data_root = "/opt/airflow/data"
+
+    try:
+        # Example for the core entity: Orders
+        silver_orders_path = f"{data_root}/silver/orders"
+        gold_fact_orders_path = f"{data_root}/gold/fact_orders"
+
+        # Helper to get count from parquet (simplified for local execution)
+        def get_count(path):
+            files = glob.glob(f"{path}/**/*.parquet", recursive=True)
+            if not files:
+                return 0
+            # Read first few bytes or use a metadata tool if available
+            # Here we use pandas to simulate reading parquet counts
+            count = 0
+            for f in files:
+                count += len(pd.read_parquet(f, columns=[]))
+            return count
+
+        silver_count = get_count(silver_orders_path)
+        gold_count = get_count(gold_fact_orders_path)
+
+        logging.info(f"Integrity Check: Silver Orders = {silver_count}, Gold Fact Orders = {gold_count}")
+
+        if gold_count == 0:
+            raise AirflowException("CRITICAL: Gold layer is empty.")
+
+        if gold_count < (silver_count * 0.95):
+            raise AirflowException(
+                f"CRITICAL: Data loss detected. Gold count {gold_count} is less than 95% of Silver count {silver_count}."
+            )
+
+        logging.info("Integrity check passed.")
+        return True
+
+    except Exception as e:
+        logging.error(f"Integrity check failed: {str(e)}")
+        raise AirflowException(f"Pipeline integrity violation: {str(e)}")
 
 
 default_args = {
@@ -86,17 +138,11 @@ with DAG(
         name='gold_star_schema_materialization'
     )
 
-    # 5. Integrity Verification: Cross-layer validation
-    def verify_pipeline_integrity():
-        """
-        Executes cross-layer integrity checks.
-        """
-        logging.info("Validating Gold layer data integrity and completeness.")
-        return True
-
+    # 5. Integrity Verification: Production data consistency check
     check_integrity = PythonOperator(
         task_id='verify_pipeline_integrity',
-        python_callable=verify_pipeline_integrity
+        python_callable=verify_pipeline_integrity,
+        provide_context=True
     )
 
     # Flow dependencies
