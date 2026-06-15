@@ -2,56 +2,61 @@ import sys
 from pyspark.sql import SparkSession
 from spark.transformations.bronze_layer import process_bronze_layer
 from spark.transformations.silver_layer import process_silver_layer
-from spark.transformations.gold_layer import create_gold_customer_orders, create_gold_product_sales
+from spark.transformations.gold_layer import create_gold_star_schema
+from spark.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: main_job.py <layer> [entity]")
+        logger.error("Missing arguments. Usage: main_job.py <layer> [entity]")
         sys.exit(1)
 
     layer = sys.argv[1]
+
     spark = SparkSession.builder \
-        .appName(f"DataPipeline_{layer}") \
+        .appName(f"Enterprise_Data_Pipeline_{layer}") \
         .config("spark.sql.parquet.compression.codec", "snappy") \
+        .config("spark.sql.sources.partitionOverwriteMode", "dynamic") \
         .getOrCreate()
 
-    base_data_path = "data"
-    raw_path = f"{base_data_path}/raw"
-    bronze_path = f"{base_data_path}/bronze"
-    silver_path = f"{base_data_path}/silver"
-    gold_path = f"{base_data_path}/gold"
+    try:
+        if layer == "bronze":
+            entity = sys.argv[2]
+            process_bronze_layer(spark, entity)
 
-    if layer == "bronze":
-        entity = sys.argv[2] if len(sys.argv) > 2 else None
-        entities = [entity] if entity else ["customers", "orders", "order_items", "products", "payments", "invoices", "user_activity", "logs"]
-        for e in entities:
-            process_bronze_layer(spark, raw_path, bronze_path, e)
+        elif layer == "silver":
+            entity = sys.argv[2]
+            # Production PK and PII config
+            configs = {
+                "customers": {"pk": "customer_id", "pii": ["email", "phone", "address"], "critical": ["email"]},
+                "orders": {"pk": "order_id", "critical": ["customer_id", "total_amount"]},
+                "products": {"pk": "product_id", "critical": ["name", "price"]},
+                "order_items": {"pk": "order_item_id", "critical": ["order_id", "product_id"]},
+                "payments": {"pk": "payment_id", "critical": ["invoice_id", "amount"]},
+                "invoices": {"pk": "invoice_id", "critical": ["order_id"]}
+            }
+            cfg = configs.get(entity, {"pk": "id"})
+            process_silver_layer(
+                spark,
+                entity,
+                cfg["pk"],
+                cfg.get("pii"),
+                cfg.get("critical")
+            )
 
-    elif layer == "silver":
-        entity = sys.argv[2] if len(sys.argv) > 2 else None
-        # Entity to primary key mapping
-        entity_pk_map = {
-            "customers": "customer_id",
-            "orders": "order_id",
-            "order_items": "order_item_id",
-            "products": "product_id",
-            "payments": "payment_id",
-            "invoices": "invoice_id",
-            "user_activity": "user_id", # Simplified
-            "logs": "log_id"
-        }
+        elif layer == "gold":
+            create_gold_star_schema(spark)
 
-        if entity:
-            process_silver_layer(spark, bronze_path, silver_path, entity, entity_pk_map.get(entity, "id"))
         else:
-            for e, pk in entity_pk_map.items():
-                process_silver_layer(spark, bronze_path, silver_path, e, pk)
+            logger.error(f"Unknown layer: {layer}")
+            sys.exit(1)
 
-    elif layer == "gold":
-        create_gold_customer_orders(spark, silver_path, gold_path)
-        create_gold_product_sales(spark, silver_path, gold_path)
-
-    spark.stop()
+    except Exception as e:
+        logger.error(f"Job failed during {layer} processing: {str(e)}")
+        sys.exit(1)
+    finally:
+        spark.stop()
 
 if __name__ == "__main__":
     main()

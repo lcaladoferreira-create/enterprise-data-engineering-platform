@@ -1,37 +1,38 @@
-# Apache NiFi Ingestion Layer
+# Production Ingestion Strategy with Apache NiFi
 
-NiFi is used as the primary ingestion tool to move data from source systems (PostgreSQL, MySQL, MongoDB, Cassandra) into the raw data lake layer (`data/raw`).
+This document outlines the professional ingestion strategy from diverse sources to the Raw layer.
 
-## Flow Design Overview
+## Source Systems & Ingestion Modes
 
-The NiFi flow is organized into Process Groups for each source system:
+| Source | Technology | Ingestion Mode | NiFi Processor |
+|--------|------------|----------------|----------------|
+| Transactional | PostgreSQL | Incremental (CDC/Timestamp) | `QueryDatabaseTable` |
+| Billing | MySQL | Batch (Daily) | `ExecuteSQL` |
+| Product Catalog | MongoDB | Full Refresh (Small) | `GetMongo` |
+| Logs/Events | Cassandra | Real-time Stream | `QueryCassandra` |
 
-1.  **PostgreSQL Ingestion**:
-    *   `QueryDatabaseTable`: Periodically fetches new records from `customers`, `orders`, and `order_items`.
-    *   `ConvertAvroToJSON`: Transforms the database format to JSON.
-    *   `PutFile`: Saves JSON files to `data/raw/customers`, `data/raw/orders`, etc.
+## NiFi Flow Best Practices
 
-2.  **MySQL Ingestion**:
-    *   Similar to PostgreSQL, using `QueryDatabaseTable` for `invoices` and `payments`.
+1.  **Backpressure & Flow Control**:
+    *   Configured on all connections to prevent overloading the Raw storage.
+    *   Object Threshold: 10,000; Data Size Threshold: 1 GB.
 
-3.  **MongoDB Ingestion**:
-    *   `GetMongo`: Queries the `products` and `user_activity` collections.
-    *   `PutFile`: Saves to `data/raw/products` and `data/raw/user_activity`.
+2.  **Error Handling & Retries**:
+    *   Use of `RetryAttribute` and dedicated failure queues.
+    *   Failed flowfiles are routed to a `LogAttribute` processor and then to a `Quarantine` bucket.
 
-4.  **Cassandra Ingestion**:
-    *   `QueryCassandra`: Fetches `application_logs` and `user_events`.
-    *   `PutFile`: Saves to `data/raw/logs`.
+3.  **Security**:
+    *   JDBC connections use **Sensitive Parameter Contexts**.
+    *   Data is encrypted in transit using TLS.
 
-## Configuration
+4.  **Raw Layer Formatting**:
+    *   Data is saved in `data/raw/{entity_name}/{year}/{month}/{day}/{timestamp}.json`.
+    *   Allows for efficient discovery and processing by Spark.
 
-The `docker-compose.yml` file mounts the NiFi configuration and the data raw directory. In a production environment, NiFi would use Site-to-Site or S3 processors to move data to a real Data Lake.
+## Local Simulation
 
-## Template Placeholder
+The `scripts/seed_data.py` script mimics this behavior by generating JSON files in the expected Raw directory structure, which then triggers the Airflow `FileSensor`.
 
-A sample NiFi template XML would normally be placed in `nifi/templates/data_ingestion_flow.xml`. For this portfolio, we document the flow logic.
+## Production Hardening
 
-## Security
-
-*   NiFi is configured with HTTPS.
-*   Database connections use sensitive parameter contexts for passwords.
-*   Data provenance is enabled for full auditability.
+In a cloud environment, NiFi should be deployed in a cluster for high availability, using S3/GCS/ADLS processors instead of local `PutFile`.

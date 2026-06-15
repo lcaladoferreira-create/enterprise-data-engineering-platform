@@ -4,9 +4,9 @@ import time
 
 def seed_raw_data():
     """
-    Simulates NiFi ingestion by creating raw JSON files in the data/raw directory.
+    Initializes raw JSON files in the data/raw directory to kick off the pipeline.
     """
-    print("Seeding raw data to simulate NiFi ingestion...")
+    print("Initializing raw data for ingestion...")
 
     base_path = "data/raw"
     entities = {
@@ -25,6 +25,12 @@ def seed_raw_data():
         "order_items": [
             {"order_item_id": 1, "order_id": 1, "product_id": 101, "quantity": 1, "unit_price": 100.00},
             {"order_item_id": 2, "order_id": 1, "product_id": 102, "quantity": 2, "unit_price": 25.25}
+        ],
+        "payments": [
+            {"payment_id": 1, "invoice_id": 1, "payment_date": "2023-10-01 10:10:00", "amount": 150.50, "payment_method": "credit_card", "transaction_id": "TXN_001"}
+        ],
+        "invoices": [
+            {"invoice_id": 1, "order_id": 1, "invoice_date": "2023-10-01 10:05:00", "due_date": "2023-10-15 10:05:00", "amount": 150.50, "status": "paid"}
         ]
     }
 

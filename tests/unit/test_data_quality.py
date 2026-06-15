@@ -1,7 +1,7 @@
 import pytest
 from spark.utils.data_quality import check_nulls, check_duplicates
 from pyspark.sql import SparkSession
-from pyspark.sql import Row
+from pyspark.sql import Row, functions as F
 
 @pytest.fixture(scope="session")
 def spark():
@@ -18,9 +18,10 @@ def test_check_nulls(spark):
     ]
     df = spark.createDataFrame(data)
 
-    result = check_nulls(df, ["name"])
-    assert "name" in result
-    assert result["name"] == 1
+    result_df = check_nulls(df, ["name"])
+    # Filter failed records
+    failed_count = result_df.filter(F.col("dq_failed")).count()
+    assert failed_count == 1
 
 def test_check_duplicates(spark):
     data = [

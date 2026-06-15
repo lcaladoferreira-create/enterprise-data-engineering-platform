@@ -6,50 +6,61 @@ import os
 import shutil
 
 @pytest.fixture(scope="session")
-def spark():
+def spark_session():
     return SparkSession.builder \
         .master("local[1]") \
         .appName("pytest-spark-transformations") \
         .config("spark.sql.shuffle.partitions", "1") \
         .getOrCreate()
 
-def test_silver_transformation_deduplication(spark):
+def test_silver_transformation_deduplication(spark_session):
     # Setup temporary directories
-    bronze_path = "tests/temp_bronze"
-    silver_path = "tests/temp_silver"
+    bronze_path = "tests/temp_bronze_customers"
+    silver_path = "tests/temp_silver_customers"
     entity = "customers"
 
-    if os.path.exists(bronze_path): shutil.rmtree(bronze_path)
-    if os.path.exists(silver_path): shutil.rmtree(silver_path)
+    if os.path.exists(bronze_path):
+        shutil.rmtree(bronze_path)
+    if os.path.exists(silver_path):
+        shutil.rmtree(silver_path)
 
-    os.makedirs(f"{bronze_path}/{entity}", exist_ok=True)
+    os.makedirs(bronze_path, exist_ok=True)
 
     # Create sample data
     data = [
-        (1, "John", "2023-01-01 10:00:00"),
-        (1, "John Doe", "2023-01-01 11:00:00")
+        (1, "John", "2023-01-01 10:00:00", "local_dev", "source"),
+        (1, "John Doe", "2023-01-01 11:00:00", "local_dev", "source")
     ]
-    columns = ["customer_id", "name", "ingestion_timestamp"]
-    df = spark.createDataFrame(data, columns)
+    columns = ["customer_id", "name", "processed_at", "batch_id", "source_system"]
+    df = spark_session.createDataFrame(data, columns)
 
     # Cast to correct types
-    df = df.withColumn("ingestion_timestamp", F.to_timestamp("ingestion_timestamp"))
+    df = df.withColumn("processed_at", F.to_timestamp("processed_at"))
 
     # Save as parquet to simulate bronze layer
-    df.write.mode("overwrite").parquet(f"{bronze_path}/{entity}")
+    df.write.mode("overwrite").parquet(bronze_path)
 
     # Run silver transformation
-    process_silver_layer(spark, bronze_path, silver_path, entity, "customer_id")
+    process_silver_layer(
+        spark_session,
+        entity,
+        "customer_id",
+        critical_cols=["name"],
+        bronze_path=bronze_path,
+        silver_path=silver_path
+    )
 
     # Verify result
-    result_df = spark.read.parquet(f"{silver_path}/{entity}")
+    result_df = spark_session.read.parquet(silver_path)
 
     assert result_df.count() == 1
 
-    # Sort and check name
+    # Check that the latest record was kept
     row = result_df.collect()[0]
     assert row["name"] == "John Doe"
 
     # Cleanup
-    shutil.rmtree(bronze_path)
-    shutil.rmtree(silver_path)
+    if os.path.exists(bronze_path):
+        shutil.rmtree(bronze_path)
+    if os.path.exists(silver_path):
+        shutil.rmtree(silver_path)

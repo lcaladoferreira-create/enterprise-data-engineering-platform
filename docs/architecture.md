@@ -1,44 +1,27 @@
-# Platform Architecture
+# Medallion Architecture
 
-## Data Layers (Medallion Architecture)
+The platform follows the Medallion Architecture to ensure data quality and reliability as it flows through the pipeline.
 
-1.  **Raw Layer**:
-    - Landing zone for source data.
-    - Format: Original source format (mostly JSON).
-    - Immutable storage.
+## 1. Raw Layer (Opaque)
+*   **Format**: JSON/Avro (original source format).
+*   **Storage**: `data/raw/{entity}`.
+*   **Nature**: Immutable landing zone. Data is organized by ingestion date.
 
-2.  **Bronze Layer (Validated)**:
-    - Data converted to Parquet for performance.
-    - Added metadata: `ingestion_timestamp`, `source_file`.
-    - Schema validation applied.
+## 2. Bronze Layer (Validated)
+*   **Logic**: Schema enforcement, audit metadata addition, and change tracking hash.
+*   **Format**: Parquet.
+*   **Metadata**: `batch_id`, `source_system`, `processed_at`, `record_hash`.
+*   **Partitioning**: `ingestion_date`.
 
-3.  **Silver Layer (Cleaned & Standardized)**:
-    - Deduplication using business keys.
-    - Standardized formats (dates, phone numbers, emails).
-    - Null handling and basic data cleaning.
-    - PII masking where appropriate.
+## 3. Silver Layer (Cleaned)
+*   **Logic**: Deduplication based on Primary Key, data standardization, and PII masking.
+*   **Deduplication**: Uses Window functions to keep the latest record per PK.
+*   **Quarantine**: Records failing critical null checks are moved to a quarantine directory for investigation.
+*   **Anonymization**: Sensitive fields (Email, Phone) are hashed using SHA-256.
 
-4.  **Gold Layer (Curated/Analytical)**:
-    - Business-level aggregates.
-    - Joined tables (e.g., `customer_orders`).
-    - Optimized for BI and reporting.
-
-## Technology Stack
-
--   **Ingestion**: Apache NiFi handles the movement of data from transactional databases to the Raw layer.
--   **Orchestration**: Apache Airflow manages the workflow, scheduling Spark jobs and running validation tasks.
--   **Processing**: Apache Spark (PySpark) provides the heavy lifting for data transformations across layers.
--   **Storage**:
-    - Local: Filesystem (simulating HDFS/S3).
-    - Cloud: S3 (AWS), GCS (GCP), ADLS Gen2 (Azure).
--   **Source Databases**: PostgreSQL, MySQL, MongoDB, Cassandra.
-
-## Data Flow Pattern
-
-1.  NiFi extracts data from sources via JDBC/Drivers.
-2.  NiFi writes data to `data/raw/{entity}/`.
-3.  Airflow DAG triggers.
-4.  Spark Job: Raw -> Bronze.
-5.  Spark Job: Bronze -> Silver.
-6.  Spark Job: Silver -> Gold.
-7.  Analytical queries run against Gold layer.
+## 4. Gold Layer (Curated)
+*   **Model**: Star Schema.
+*   **Dimensions**: `dim_customers`, `dim_products`.
+*   **Facts**: `fact_orders`.
+*   **Data Marts**: `mart_sales_daily`.
+*   **Usage**: Optimized for BI tools (Tableau, PowerBI) and data science notebooks.

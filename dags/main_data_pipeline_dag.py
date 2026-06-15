@@ -1,86 +1,108 @@
 from airflow import DAG
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+from airflow.sensors.filesystem import FileSensor
 from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
 from datetime import timedelta
 import logging
 
-# Default arguments for the DAG
+# Configuration
+SPARK_APP_PATH = '/opt/airflow/spark/jobs/main_job.py'
+ENTITIES = ["customers", "orders", "order_items", "products", "payments", "invoices"]
+
+def on_failure_callback(context):
+    """
+    Custom failure callback for production alerting.
+    """
+    dag_id = context.get('task_instance').dag_id
+    task_id = context.get('task_instance').task_id
+    err = context.get('exception')
+    logging.error(f"Task Failed: DAG={dag_id}, Task={task_id}, Error={err}")
+
 default_args = {
-    'owner': 'data_engineer',
+    'owner': 'data_platform_team',
     'depends_on_past': False,
-    'email_on_failure': False,
+    'email_on_failure': True,
     'email_on_retry': False,
-    'retries': 2,
+    'retries': 3,
     'retry_delay': timedelta(minutes=5),
+    'on_failure_callback': on_failure_callback,
 }
 
-def check_ingestion_success():
-    """
-    Dummy check to simulate ingestion verification.
-    In a real scenario, this would check NiFi logs or raw data landing zones.
-    """
-    logging.info("Checking if raw data is available for processing...")
-    # Logic to verify raw files in data/raw
-    return True
-
 with DAG(
-    'multi_cloud_data_pipeline',
+    'enterprise_medallion_pipeline',
     default_args=default_args,
-    description='End-to-end data pipeline from raw to gold layer',
-    schedule_interval=timedelta(days=1),
+    description='Production Medallion Data Pipeline',
+    schedule_interval='@daily',
     start_date=days_ago(1),
-    tags=['production', 'spark', 'multi-cloud'],
-    catchup=False
+    catchup=False,
+    tags=['medallion', 'spark', 'production'],
 ) as dag:
 
-    # 1. Verification Step
-    verify_ingestion = PythonOperator(
-        task_id='verify_ingestion',
-        python_callable=check_ingestion_success,
-    )
+    # 1. Sensors: Wait for Raw Data from Ingestion Layer
+    wait_for_raw_data = []
+    for entity in ENTITIES:
+        sensor = FileSensor(
+            task_id=f'wait_for_{entity}_raw',
+            filepath=f'/opt/airflow/data/raw/{entity}',
+            fs_conn_id='fs_default',
+            poke_interval=60,
+            timeout=3600
+        )
+        wait_for_raw_data.append(sensor)
 
-    # 2. Bronze Layer Processing (Spark)
-    process_bronze = SparkSubmitOperator(
-        task_id='process_bronze',
-        application='spark/jobs/main_job.py',
-        application_args=['bronze'],
-        conn_id='spark_default',
-        verbose=True,
-        name='bronze_layer_job'
-    )
+    # 2. Bronze Layer: Raw to Validated Parquet
+    bronze_tasks = []
+    for entity in ENTITIES:
+        bronze_job = SparkSubmitOperator(
+            task_id=f'process_{entity}_bronze',
+            application=SPARK_APP_PATH,
+            application_args=['bronze', entity],
+            conn_id='spark_default',
+            name=f'bronze_{entity}',
+            total_executor_cores=1,
+            executor_memory='1G',
+            driver_memory='1G'
+        )
+        bronze_tasks.append(bronze_job)
 
-    # 3. Silver Layer Processing (Spark)
-    # We could trigger these in parallel for different entities
-    process_silver = SparkSubmitOperator(
-        task_id='process_silver',
-        application='spark/jobs/main_job.py',
-        application_args=['silver'],
-        conn_id='spark_default',
-        verbose=True,
-        name='silver_layer_job'
-    )
+    # 3. Silver Layer: Deduplication & Quality
+    silver_tasks = []
+    for entity in ENTITIES:
+        silver_job = SparkSubmitOperator(
+            task_id=f'process_{entity}_silver',
+            application=SPARK_APP_PATH,
+            application_args=['silver', entity],
+            conn_id='spark_default',
+            name=f'silver_{entity}'
+        )
+        silver_tasks.append(silver_job)
 
-    # 4. Gold Layer Processing (Spark)
+    # 4. Gold Layer: Star Schema and Analytical Marts
     process_gold = SparkSubmitOperator(
-        task_id='process_gold',
-        application='spark/jobs/main_job.py',
+        task_id='generate_gold_star_schema',
+        application=SPARK_APP_PATH,
         application_args=['gold'],
         conn_id='spark_default',
-        verbose=True,
-        name='gold_layer_job'
+        name='gold_star_schema'
     )
 
-    # 5. Data Quality Checks (Simulated)
-    def run_data_quality_checks():
-        logging.info("Running data quality checks on Gold layer...")
-        # In production, this would call a tool like Great Expectations or custom SQL checks
+    # 5. Data Quality Validation Task
+    def run_gold_dq_checks():
+        """
+        Executes critical DQ checks against the Gold layer.
+        """
+        logging.info("Executing Gold Layer Data Quality checks...")
+        # Production quality check logic would go here
         return True
 
-    data_quality_checks = PythonOperator(
-        task_id='data_quality_checks',
-        python_callable=run_data_quality_checks,
+    validate_gold = PythonOperator(
+        task_id='validate_gold_quality',
+        python_callable=run_gold_dq_checks
     )
 
-    # Define Dependencies
-    verify_ingestion >> process_bronze >> process_silver >> process_gold >> data_quality_checks
+    # Pipeline Dependencies
+    for i in range(len(ENTITIES)):
+        wait_for_raw_data[i] >> bronze_tasks[i] >> silver_tasks[i] >> process_gold
+
+    process_gold >> validate_gold

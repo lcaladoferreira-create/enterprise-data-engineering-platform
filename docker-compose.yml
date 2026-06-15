@@ -11,7 +11,7 @@ x-airflow-common:
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
-    _PIP_ADDITIONAL_DEPENDENCIES: ${_PIP_ADDITIONAL_DEPENDENCIES:-}
+    _PIP_ADDITIONAL_DEPENDENCIES: 'apache-airflow-providers-apache-spark pyspark pymongo cassandra-driver'
   volumes:
     - ./dags:/opt/airflow/dags
     - ./spark:/opt/airflow/spark
@@ -41,6 +41,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - data-platform-net
 
   mysql-source:
     image: mysql:8.0
@@ -59,6 +61,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - data-platform-net
 
   mongodb-source:
     image: mongo:6.0
@@ -71,6 +75,8 @@ services:
       - "${MONGODB_PORT:-27017}:27017"
     volumes:
       - ./databases/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - data-platform-net
 
   cassandra-source:
     image: cassandra:4.1
@@ -81,21 +87,10 @@ services:
       CASSANDRA_CLUSTER_NAME: "EventCluster"
     volumes:
       - ./databases/cassandra:/docker-entrypoint-initdb.d
+    networks:
+      - data-platform-net
 
-  # --- Ingestion ---
-  nifi:
-    image: apache/nifi:1.23.2
-    container_name: nifi
-    ports:
-      - "8443:8443"
-    environment:
-      SINGLE_USER_CREDENTIALS_USERNAME: admin
-      SINGLE_USER_CREDENTIALS_PASSWORD: nifipassword123
-    volumes:
-      - ./nifi/conf:/opt/nifi/nifi-current/conf
-      - ./data/raw:/opt/nifi/nifi-current/data/raw
-
-  # --- Orchestration (Airflow) ---
+  # --- Orchestration ---
   airflow-db:
     image: postgres:15
     container_name: airflow-db
@@ -108,6 +103,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - data-platform-net
 
   airflow-webserver:
     <<: *airflow-common
@@ -120,28 +117,30 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+    networks:
+      - data-platform-net
 
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
     container_name: airflow-scheduler
+    networks:
+      - data-platform-net
 
-  # --- Processing (Spark) ---
+  # --- Processing ---
   spark-master:
     image: bitnami/spark:3.4.1
     container_name: spark-master
     environment:
       - SPARK_MODE=master
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
     ports:
       - "7077:7077"
       - "8081:8081"
     volumes:
       - ./spark:/opt/bitnami/spark/spark-apps
       - ./data:/opt/bitnami/spark/data
+    networks:
+      - data-platform-net
 
   spark-worker:
     image: bitnami/spark:3.4.1
@@ -149,18 +148,14 @@ services:
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY:-1G}
-      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-1}
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
     volumes:
       - ./spark:/opt/bitnami/spark/spark-apps
       - ./data:/opt/bitnami/spark/data
     depends_on:
       - spark-master
+    networks:
+      - data-platform-net
 
 networks:
-  default:
+  data-platform-net:
     name: data-platform-network

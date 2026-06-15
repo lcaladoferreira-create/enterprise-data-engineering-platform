@@ -1,119 +1,51 @@
-# Multi-Cloud Data Engineering Platform
+# Enterprise Multi-Cloud Data Engineering Platform
 
-A production-grade, end-to-end data engineering platform demonstrating modern batch pipeline architecture, multi-source ingestion, and multi-cloud compatibility.
+A professional-grade, end-to-end data engineering platform implementing the **Medallion Architecture** (Raw -> Bronze -> Silver -> Gold) with multi-cloud deployment capabilities.
 
-## Project Overview
+## Architecture Overview
 
-This project simulates a real-world data platform that ingests customer, order, and event data from multiple source systems (PostgreSQL, MySQL, MongoDB, Cassandra), processes it through a Medallion Architecture (Raw -> Bronze -> Silver -> Gold), and serves analytical insights.
+The platform is designed to handle high-volume batch data processing using modern tools and best practices.
 
-### Key Features
-- **Multi-Source Ingestion**: Relational (PostgreSQL, MySQL) and NoSQL (MongoDB, Cassandra) sources.
-- **Medallion Architecture**: Clear separation of data layers for quality and reliability.
-- **Orchestration**: Production-style Airflow DAGs with retry logic and dependencies.
-- **Processing**: Modular PySpark jobs for scalable transformations.
-- **Data Quality**: Automated checks for nulls, duplicates, and referential integrity.
-- **Security & Compliance**: Integrated GDPR/LGPD concepts and data masking.
-- **Multi-Cloud Ready**: Deployment guides for AWS, GCP, and Azure.
-
-## Architecture
+*   **Ingestion Layer**: Apache NiFi extracts data from PostgreSQL, MySQL, MongoDB, and Cassandra into a Raw landing zone.
+*   **Orchestration Layer**: Apache Airflow manages complex DAGs with sensors, retries, and failure callbacks.
+*   **Processing Layer**: Apache Spark (PySpark) performs scalable transformations across data layers.
+*   **Storage Layer**: Parquet-based Data Lake with a Star Schema in the Gold layer.
 
 ```mermaid
 graph LR
-    subgraph Sources
-        PG[(PostgreSQL)]
-        MY[(MySQL)]
-        MG[(MongoDB)]
-        CS[(Cassandra)]
+    Sources[(Sources)] --> NiFi[Apache NiFi]
+    NiFi --> Raw[Raw Layer]
+    subgraph Medallion
+        Raw --> Bronze[Bronze: Validated]
+        Bronze --> Silver[Silver: Cleaned]
+        Silver --> Gold[Gold: Curated]
     end
-
-    subgraph Ingestion
-        NiFi[Apache NiFi]
-    end
-
-    subgraph "Data Lake (Storage)"
-        Raw[Raw Layer]
-        Bronze[Bronze Layer]
-        Silver[Silver Layer]
-        Gold[Gold Layer]
-    end
-
-    subgraph "Processing & Orchestration"
-        Airflow[Apache Airflow]
-        Spark[Apache Spark]
-    end
-
-    subgraph Serving
-        BI[BI Tools / SQL]
-    end
-
-    PG & MY & MG & CS --> NiFi
-    NiFi --> Raw
-    Airflow --> Spark
-    Spark --> Raw
-    Spark --> Bronze
-    Spark --> Silver
-    Spark --> Gold
-    Gold --> BI
-```
-
-## Quick Start (Local Environment)
-
-### Prerequisites
-- Docker and Docker Compose
-- Python 3.9+
-- Make (optional)
-
-### Setup
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/your-username/multi-cloud-data-engineering-platform.git
-   cd multi-cloud-data-engineering-platform
-   ```
-
-2. Configure environment variables:
-   ```bash
-   cp .env.example .env
-   ```
-
-3. Start the platform:
-   ```bash
-   make up
-   # or
-   docker-compose up -d
-   ```
-
-4. Initialize sample data:
-   ```bash
-   make init-data
-   ```
-
-5. Access services:
-   - **Airflow**: [http://localhost:8080](http://localhost:8080) (admin/admin)
-   - **NiFi**: [https://localhost:8443](https://localhost:8443) (admin/nifipassword123)
-   - **Spark Master**: [http://localhost:8081](http://localhost:8081)
-
-## Project Structure
-
-```text
-.
-├── dags/               # Airflow DAGs
-├── spark/              # PySpark jobs and transformations
-├── sql/                # SQL scripts (DDL, Analytics, DQ)
-├── nifi/               # NiFi configuration and docs
-├── databases/          # Source database init scripts
-├── docs/               # Detailed documentation
-├── tests/              # Unit and Spark tests
-└── infrastructure/     # Cloud-specific templates
+    Airflow[Apache Airflow] -. Orchestrates .-> Spark[Apache Spark]
+    Spark -. Processes .-> Medallion
 ```
 
 ## Documentation
-- [Architecture Details](docs/architecture.md)
-- [Cloud Deployment (AWS)](docs/cloud-aws.md)
-- [Cloud Deployment (GCP)](docs/cloud-gcp.md)
-- [Cloud Deployment (Azure)](docs/cloud-azure.md)
-- [Security & Compliance](docs/security-compliance.md)
-- [Data Model](docs/data-model.md)
-- [Data Quality Strategy](docs/quality_checks.md)
 
-## License
-MIT
+*   [Local Setup Guide](docs/local_setup.md)
+*   [Medallion Architecture Details](docs/architecture.md)
+*   [Cloud Deployment: AWS](docs/cloud_deployment_aws.md)
+*   [Cloud Deployment: GCP](docs/cloud_deployment_gcp.md)
+*   [Cloud Deployment: Azure](docs/cloud_deployment_azure.md)
+*   [Data Model (Star Schema)](docs/data_model.md)
+*   [Security & Compliance (GDPR/LGPD)](docs/security_compliance.md)
+*   [Data Quality Strategy](docs/data_quality.md)
+*   [Operations Runbook](docs/operations_runbook.md)
+*   [Production Hardening Checklist](docs/production_hardening_checklist.md)
+
+## Key Technical Features
+
+*   **Production Spark Jobs**: Type-hinted, structured logging, schema enforcement, and idempotent partitioning.
+*   **Star Schema**: Implements `dim_customers`, `dim_products`, `fact_orders`, and analytical marts.
+*   **Data Quality**: Quarantine pattern for failed records, null checks, and referential integrity.
+*   **PII Masking**: GDPR-compliant SHA-256 hashing for sensitive fields.
+*   **Multi-Cloud IaC**: Actual Terraform modules for AWS, GCP, and Azure.
+*   **CI/CD**: Comprehensive GitHub Actions workflow with linting and automated tests.
+
+## Getting Started
+
+Refer to the [Local Setup Guide](docs/local_setup.md) to spin up the platform using Docker Compose and initialize the sample datasets.
