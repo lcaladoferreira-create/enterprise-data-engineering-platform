@@ -8,35 +8,34 @@ from spark.utils.schemas import SCHEMAS
 logger = get_logger(__name__)
 
 
-def get_last_processed_timestamp(entity_name: str) -> str:
+def get_high_watermark(entity_name: str) -> str:
     """
-    Retrieves the high-watermark from a state file.
+    Retrieves the last processed timestamp for an entity.
     """
-    state_file = f"config/state/{entity_name}_watermark.txt"
+    state_file = f"config/state/{entity_name}_high_watermark.txt"
     if os.path.exists(state_file):
         with open(state_file, "r") as f:
             return f.read().strip()
-    return "1900-01-01 00:00:00"
+    return "1970-01-01 00:00:00"
 
 
-def update_last_processed_timestamp(entity_name: str, timestamp: str) -> None:
+def set_high_watermark(entity_name: str, timestamp: str) -> None:
     """
-    Updates the high-watermark in a state file.
+    Saves the latest processed timestamp for an entity.
     """
     state_dir = "config/state"
     os.makedirs(state_dir, exist_ok=True)
-    state_file = f"{state_dir}/{entity_name}_watermark.txt"
+    state_file = f"{state_dir}/{entity_name}_high_watermark.txt"
     with open(state_file, "w") as f:
         f.write(timestamp)
 
 
 def process_bronze_layer(spark: SparkSession, entity_name: str) -> None:
     """
-    Bronze Layer: Incremental load using High-Watermark pattern.
-    Only reads records where 'updated_at' or 'created_at' > last_processed.
+    Bronze Layer: Incremental ingestion of raw JSON into Parquet.
     """
     try:
-        logger.info(f"Starting Incremental Bronze processing for: {entity_name}")
+        logger.info(f"Starting Bronze processing for: {entity_name}")
 
         raw_source = f"{config.RAW_PATH}/{entity_name}"
         bronze_dest = f"{config.BRONZE_PATH}/{entity_name}"
@@ -45,48 +44,36 @@ def process_bronze_layer(spark: SparkSession, entity_name: str) -> None:
         if not entity_schema:
             raise ValueError(f"Schema not found for entity: {entity_name}")
 
-        # 1. Load high-watermark
-        last_ts = get_last_processed_timestamp(entity_name)
-        logger.info(f"Entity: {entity_name}, High-Watermark: {last_ts}")
+        last_processed_ts = get_high_watermark(entity_name)
+        logger.info(f"Incremental Load - High-watermark for {entity_name}: {last_processed_ts}")
 
-        # 2. Extract and Filter Incremental Data
-        # We assume the source JSON has a 'processed_at' or similar timestamp from the ingestion layer
-        # For this implementation, we'll use Spark's ability to read modification times if available,
-        # but here we'll filter on a column present in the data for consistency.
-        df = spark.read.schema(entity_schema).json(raw_source)
+        raw_df = spark.read.schema(entity_schema).json(raw_source)
 
-        # Check if the dataframe has a timestamp column to filter on
-        ts_col = "order_date" if "order_date" in df.columns else "invoice_date"
-        if ts_col not in df.columns:
-            ts_col = None # Fallback to full load if no timestamp available
+        watermark_col = "order_date" if "order_date" in raw_df.columns else "invoice_date"
 
-        if ts_col:
-            df = df.filter(F.col(ts_col) > F.lit(last_ts))
+        if watermark_col in raw_df.columns:
+            raw_df = raw_df.filter(F.col(watermark_col) > F.lit(last_processed_ts))
 
-        if df.count() == 0:
-            logger.info(f"No new records found for {entity_name} since {last_ts}")
+        if raw_df.count() == 0:
+            logger.info(f"No new records found for {entity_name}.")
             return
 
-        # 3. Transform: Metadata and Integrity
-        df = add_audit_metadata(df, config.BATCH_ID, config.SOURCE_SYSTEM)
+        df = add_audit_metadata(raw_df, config.BATCH_ID, config.SOURCE_SYSTEM)
         df = compute_record_hash(df)
         df = df.withColumn("ingestion_date", F.to_date(F.col("processed_at")))
 
-        # Capture current max timestamp before write
-        if ts_col:
-            current_max_ts = df.select(F.max(ts_col)).collect()[0][0]
+        if watermark_col in df.columns:
+            new_watermark = df.select(F.max(watermark_col)).collect()[0][0]
+        else:
+            new_watermark = None
 
-        # 4. Load: Idempotent write
-        df.write.mode("append") \
-            .partitionBy("ingestion_date") \
-            .parquet(bronze_dest)
+        df.write.mode("append").partitionBy("ingestion_date").parquet(bronze_dest)
 
-        # 5. Update Watermark
-        if ts_col and current_max_ts:
-            update_last_processed_timestamp(entity_name, str(current_max_ts))
+        if new_watermark:
+            set_high_watermark(entity_name, str(new_watermark))
 
-        logger.info(f"Bronze incremental load complete for {entity_name}")
+        logger.info(f"Bronze layer load complete for {entity_name}")
 
     except Exception as e:
-        logger.error(f"Bronze layer failure: {str(e)}", exc_info=True)
+        logger.error(f"Bronze layer failure for {entity_name}: {str(e)}", exc_info=True)
         raise

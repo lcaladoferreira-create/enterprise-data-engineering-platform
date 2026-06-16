@@ -24,13 +24,11 @@ def notify_pipeline_failure(context):
 
 def verify_pipeline_integrity(**kwargs):
     """
-    Reads record counts from bronze, silver, and gold layers and validates consistency.
+    Reads record counts from silver and gold layers and validates consistency.
     Raises AirflowException if critical thresholds are not met.
     """
     logging.info("Starting production integrity verification.")
 
-    # Paths to the materialized parquet files
-    # Note: In production these would be S3/GCS paths
     data_root = "/opt/airflow/data"
 
     try:
@@ -38,13 +36,10 @@ def verify_pipeline_integrity(**kwargs):
         silver_orders_path = f"{data_root}/silver/orders"
         gold_fact_orders_path = f"{data_root}/gold/fact_orders"
 
-        # Helper to get count from parquet (simplified for local execution)
         def get_count(path):
             files = glob.glob(f"{path}/**/*.parquet", recursive=True)
             if not files:
                 return 0
-            # Read first few bytes or use a metadata tool if available
-            # Here we use pandas to simulate reading parquet counts
             count = 0
             for f in files:
                 count += len(pd.read_parquet(f, columns=[]))
@@ -138,11 +133,10 @@ with DAG(
         name='gold_star_schema_materialization'
     )
 
-    # 5. Integrity Verification: Production data consistency check
+    # 5. Integrity Verification: Cross-layer validation
     check_integrity = PythonOperator(
         task_id='verify_pipeline_integrity',
-        python_callable=verify_pipeline_integrity,
-        provide_context=True
+        python_callable=verify_pipeline_integrity
     )
 
     # Flow dependencies

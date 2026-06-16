@@ -28,18 +28,18 @@ def main():
     try:
         if layer == "bronze":
             if len(sys.argv) < 3:
-                logger.error("Bronze layer execution requires an entity argument.")
+                logger.error("Bronze layer requires an entity argument.")
                 sys.exit(1)
             entity = sys.argv[2]
             process_bronze_layer(spark, entity)
 
         elif layer == "silver":
             if len(sys.argv) < 3:
-                logger.error("Silver layer execution requires an entity argument.")
+                logger.error("Silver layer requires an entity argument.")
                 sys.exit(1)
             entity = sys.argv[2]
 
-            # Entity specific configuration for deduplication and quality
+            # Configuration for entities
             configs = {
                 "customers": {
                     "pk": "customer_id",

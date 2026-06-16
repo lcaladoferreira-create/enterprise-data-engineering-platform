@@ -17,11 +17,10 @@ def process_silver_layer(
     silver_path: str = None
 ) -> None:
     """
-    Silver Layer: Deduplication, Cleaning, and Security.
-    Implements a quarantine pattern for DQ failures and PII masking.
+    Silver Layer: Implementation of deduplication, data cleaning, and security.
     """
     try:
-        logger.info(f"Starting Silver processing for: {entity_name}")
+        logger.info(f"Initiating Silver transformation for entity: {entity_name}")
 
         bronze_src = bronze_path if bronze_path else f"{config.BRONZE_PATH}/{entity_name}"
         silver_dst = silver_path if silver_path else f"{config.SILVER_PATH}/{entity_name}"
@@ -29,13 +28,13 @@ def process_silver_layer(
 
         df = spark.read.parquet(bronze_src)
 
-        # 1. Deduplication: Keep latest record based on processing timestamp
+        # 1. Deduplication
         window_spec = Window.partitionBy(pk_col).orderBy(F.col("processed_at").desc())
         df = df.withColumn("row_num", F.row_number().over(window_spec)) \
                .filter(F.col("row_num") == 1) \
                .drop("row_num")
 
-        # 2. Data Quality: Quarantine records with nulls in critical columns
+        # 2. Data Quality
         if critical_cols:
             df = check_nulls(df, critical_cols)
 
@@ -46,19 +45,19 @@ def process_silver_layer(
 
             df = df.filter(~F.col("dq_failed")).drop("dq_failed", "dq_reason")
 
-        # 3. Cleaning: Standardize string fields
+        # 3. Cleaning
         for col_name, dtype in df.dtypes:
             if dtype == "string":
                 df = df.withColumn(col_name, F.trim(F.col(col_name)))
 
-        # 4. Security: Anonymize PII for compliance
+        # 4. Security
         if pii_cols:
             df = mask_pii(df, pii_cols)
 
         # 5. Load
         df.write.mode(config.WRITE_MODE).parquet(silver_dst)
-        logger.info(f"Silver layer load complete for {entity_name}")
+        logger.info(f"Silver layer materialization successful for {entity_name}.")
 
     except Exception as e:
-        logger.error(f"Silver layer failure for {entity_name}: {str(e)}", exc_info=True)
+        logger.error(f"Silver processing failed for {entity_name}: {str(e)}", exc_info=True)
         raise
