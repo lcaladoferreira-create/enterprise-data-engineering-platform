@@ -14,7 +14,7 @@ def process_silver_layer(
     pii_cols: list = None,
     critical_cols: list = None,
     bronze_path: str = None,
-    silver_path: str = None
+    silver_path: str = None, quarantine_path: str = None
 ) -> None:
     """
     Silver Layer: Implementation of deduplication, data cleaning, and security.
@@ -24,7 +24,7 @@ def process_silver_layer(
 
         bronze_src = bronze_path if bronze_path else f"{config.BRONZE_PATH}/{entity_name}"
         silver_dst = silver_path if silver_path else f"{config.SILVER_PATH}/{entity_name}"
-        quarantine_dst = f"{config.SILVER_PATH}/quarantine/{entity_name}"
+        quarantine_dst = quarantine_path if quarantine_path else f"{config.SILVER_PATH}/quarantine/{entity_name}"
 
         df = spark.read.parquet(bronze_src)
 

@@ -1,14 +1,6 @@
-import pytest
 from spark.utils.data_quality import check_nulls, mask_pii
-from pyspark.sql import SparkSession, Row, functions as F
+from pyspark.sql import Row, functions as F
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
-
-@pytest.fixture(scope="session")
-def spark():
-    return SparkSession.builder \
-        .master("local[1]") \
-        .appName("pytest-spark-dq") \
-        .getOrCreate()
 
 def test_check_nulls_happy_path(spark):
     data = [Row(id=1, name="Alice"), Row(id=2, name="Bob")]
@@ -21,7 +13,7 @@ def test_check_nulls_with_fails(spark):
         StructField("id", IntegerType(), True),
         StructField("name", StringType(), True)
     ])
-    data = [(1, "Alice"), (2, None)]
+    data = [(1, "Alice"), (2, None), (3, "Charlie")]
     df = spark.createDataFrame(data, schema=schema)
     result_df = check_nulls(df, ["name"])
     assert result_df.filter(F.col("dq_failed")).count() == 1
@@ -47,7 +39,7 @@ def test_mask_pii_happy_path(spark):
     result_df = mask_pii(df, ["email"])
     val = result_df.collect()[0]["email"]
     assert val != "test@example.com"
-    assert len(val) == 64 # SHA-256 length
+    assert len(val) == 64
 
 def test_mask_pii_all_null(spark):
     schema = StructType([StructField("email", StringType(), True)])

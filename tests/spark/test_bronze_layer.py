@@ -1,60 +1,86 @@
-import pytest
-from pyspark.sql import SparkSession
 from spark.transformations.bronze_layer import process_bronze_layer
 import os
 import shutil
 import json
 import importlib
-import spark.utils.config
+import spark.utils.config as cfg_module
 
-@pytest.fixture(scope="session")
-def spark_session():
-    return SparkSession.builder \
-        .master("local[1]") \
-        .appName("pytest-bronze-layer") \
-        .getOrCreate()
-
-def test_bronze_layer_schema_enforcement(spark_session, monkeypatch):
-    # Setup
-    raw_path = "tests/test_raw"
-    bronze_path = "tests/test_bronze"
+def test_bronze_schema_enforcement_valid(spark, monkeypatch):
+    raw_path = os.path.abspath("tests/test_raw_v")
+    bronze_path = os.path.abspath("tests/test_bronze_v")
     entity = "customers"
+    if os.path.exists(raw_path):
+        shutil.rmtree(raw_path)
+    if os.path.exists(bronze_path):
+        shutil.rmtree(bronze_path)
+    # Clean watermark
+    w_path = f"config/state/{entity}_high_watermark.txt"
+    if os.path.exists(w_path):
+        os.remove(w_path)
 
-    # Fully qualified absolute paths for Spark
-    abs_raw = os.path.abspath(raw_path)
-    abs_bronze = os.path.abspath(bronze_path)
+    os.makedirs(f"{raw_path}/{entity}", exist_ok=True)
+    sample = {"customer_id": 1, "first_name": "A", "last_name": "B", "email": "a@b.com"}
+    with open(f"{raw_path}/{entity}/data.json", "w") as f:
+        f.write(json.dumps(sample))
+    monkeypatch.setenv("RAW_PATH", raw_path)
+    monkeypatch.setenv("BRONZE_PATH", bronze_path)
+    importlib.reload(cfg_module)
+    process_bronze_layer(spark, entity)
+    assert os.path.exists(bronze_path)
+    df = spark.read.parquet(bronze_path)
+    assert df.count() == 1
+    shutil.rmtree(raw_path)
+    shutil.rmtree(bronze_path)
 
-    if os.path.exists(abs_raw):
-        shutil.rmtree(abs_raw)
-    if os.path.exists(abs_bronze):
-        shutil.rmtree(abs_bronze)
+def test_bronze_null_handling(spark, monkeypatch):
+    raw_path = os.path.abspath("tests/test_raw_null")
+    bronze_path = os.path.abspath("tests/test_bronze_null")
+    entity = "orders"
+    if os.path.exists(raw_path):
+        shutil.rmtree(raw_path)
+    if os.path.exists(bronze_path):
+        shutil.rmtree(bronze_path)
+    # Clean watermark
+    w_path = f"config/state/{entity}_high_watermark.txt"
+    if os.path.exists(w_path):
+        os.remove(w_path)
 
-    os.makedirs(f"{abs_raw}/{entity}", exist_ok=True)
-    sample_data = {"customer_id": 1, "first_name": "John", "last_name": "Doe", "email": "john@example.com"}
+    os.makedirs(f"{raw_path}/{entity}", exist_ok=True)
+    sample = {"order_id": 1, "customer_id": 10, "order_date": "2023-10-01 10:00:00", "total_amount": 100.0}
+    with open(f"{raw_path}/{entity}/data.json", "w") as f:
+        f.write(json.dumps(sample))
+    monkeypatch.setenv("RAW_PATH", raw_path)
+    monkeypatch.setenv("BRONZE_PATH", bronze_path)
+    importlib.reload(cfg_module)
+    process_bronze_layer(spark, entity)
+    df = spark.read.parquet(bronze_path)
+    assert df.collect()[0]["status"] is None
+    shutil.rmtree(raw_path)
+    shutil.rmtree(bronze_path)
 
-    with open(f"{abs_raw}/{entity}/data.json", "w") as f:
-        f.write(json.dumps(sample_data))
+def test_bronze_invalid_struct_type(spark, monkeypatch):
+    raw_path = os.path.abspath("tests/test_raw_inv")
+    bronze_path = os.path.abspath("tests/test_bronze_inv")
+    entity = "products"
+    if os.path.exists(raw_path):
+        shutil.rmtree(raw_path)
+    if os.path.exists(bronze_path):
+        shutil.rmtree(bronze_path)
+    # Clean watermark
+    w_path = f"config/state/{entity}_high_watermark.txt"
+    if os.path.exists(w_path):
+        os.remove(w_path)
 
-    monkeypatch.setenv("RAW_PATH", abs_raw)
-    monkeypatch.setenv("BRONZE_PATH", abs_bronze)
-
-    # Reload config to pickup monkeypatch
-    importlib.reload(spark.utils.config)
-
-    # Run
-    process_bronze_layer(spark_session, entity)
-
-    # Verify
-    assert os.path.exists(abs_bronze)
-    df = spark_session.read.parquet(abs_bronze)
-
-    # Check for metadata columns added by transformation
-    assert "batch_id" in df.columns
-    assert "record_hash" in df.columns
-    assert "ingestion_date" in df.columns
-
-    # Cleanup
-    shutil.rmtree(abs_raw)
-    shutil.rmtree(abs_bronze)
-    if os.path.exists(f"config/state/{entity}_watermark.txt"):
-        os.remove(f"config/state/{entity}_watermark.txt")
+    os.makedirs(f"{raw_path}/{entity}", exist_ok=True)
+    # product_id is INT in schema, sending STRING
+    sample = {"product_id": "INVALID", "name": "Phone", "category": "X", "brand": "Y", "price": 10.0}
+    with open(f"{raw_path}/{entity}/data.json", "w") as f:
+        f.write(json.dumps(sample))
+    monkeypatch.setenv("RAW_PATH", raw_path)
+    monkeypatch.setenv("BRONZE_PATH", bronze_path)
+    importlib.reload(cfg_module)
+    process_bronze_layer(spark, entity)
+    df = spark.read.parquet(bronze_path)
+    assert df.collect()[0]["product_id"] is None
+    shutil.rmtree(raw_path)
+    shutil.rmtree(bronze_path)

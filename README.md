@@ -1,52 +1,106 @@
 # Enterprise Multi-Cloud Data Engineering Platform
 
+[![CI](https://github.com/lcaladoferreira-create/enterprise-data-engineering-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/lcaladoferreira-create/enterprise-data-engineering-platform/actions)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Apache Spark 3.4.1](https://img.shields.io/badge/Apache%20Spark-3.4.1-orange.svg)](https://spark.apache.org/)
+[![Docker Enabled](https://img.shields.io/badge/Docker-enabled-blue.svg)](https://www.docker.com/)
+[![Terraform 1.5.0+](https://img.shields.io/badge/Terraform-1.5.0%2B-purple.svg)](https://www.terraform.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A mission-critical data engineering platform demonstrating the **Medallion Architecture**, automated **Data Quality** patterns, and **Multi-Cloud** infrastructure.
 
-## Platform Core
+## 💼 Business Problem
+Modern enterprises struggle to unify data from heterogeneous sources (relational, NoSQL, streaming) into a reliable analytical layer across multi-cloud environments. This platform solves that by providing:
+- **Unified Ingestion**: Apache NiFi handles data from PostgreSQL, MySQL, MongoDB, and Cassandra without custom connectors.
+- **Governed Transformations**: Medallion Architecture enforces Bronze → Silver → Gold data contracts.
+- **Compliance by Design**: PII masking and LGPD/GDPR controls built into the Silver layer transformation.
+- **Cloud Agnosticism**: Terraform modules independently deployable to AWS, GCP, or Azure.
 
-This platform provides a robust foundation for scalable data processing, transforming fragmented source data from relational and NoSQL systems into high-value analytical marts.
+## 🛠 Tech Stack
+| Component | Technology | Role |
+|-----------|------------|------|
+| **Ingestion** | Apache NiFi | Scalable multi-source data collection and movement. |
+| **Orchestration** | Apache Airflow | Workflow scheduling, dependency management, and monitoring. |
+| **Processing** | PySpark (Spark 3.4) | Large-scale distributed data transformations. |
+| **Storage** | Parquet / S3 / ADLS | Optimized columnar storage for high-performance analytics. |
+| **Infrastructure** | Terraform | Reproducible multi-cloud infrastructure as code. |
+| **Security** | SHA-256 / CMK | PII masking and encryption at rest/transit. |
 
-*   **Ingestion**: High-availability pipeline moving data from PostgreSQL, MySQL, MongoDB, and Cassandra.
-*   **Orchestration**: Production-grade Airflow DAGs with sensors, automated retries, and comprehensive error handling.
-*   **Transformation**: Modular PySpark framework enforcing schemas, masking PII, and generating a Star Schema.
-*   **Infrastructure**: Fully-defined Terraform modules for AWS, GCP, and Azure environments.
-
-## System Architecture
+## 🏗 System Architecture
 
 ```mermaid
-graph LR
-    Sources[(Sources)] --> NiFi[Apache NiFi]
-    NiFi --> Raw[Raw Layer]
-    subgraph Medallion
-        Raw --> Bronze[Bronze: Validated]
-        Bronze --> Silver[Silver: Cleaned]
-        Silver --> Gold[Gold: Curated]
+graph TD
+    subgraph Sources
+        PG[(Postgres)]
+        MY[(MySQL)]
+        MG[(MongoDB)]
+        CS[(Cassandra)]
     end
-    Airflow[Apache Airflow] -. Orchestrates .-> Spark[Apache Spark]
-    Spark -. Processes .-> Medallion
+
+    subgraph "Ingestion Layer"
+        NiFi[Apache NiFi]
+    end
+
+    subgraph "Storage & Processing (Medallion)"
+        Raw[Raw Layer: S3/GCS/ADLS]
+        Bronze[Bronze: Validated Parquet]
+        Silver[Silver: Cleaned/Deduplicated]
+        Gold[Gold: Star Schema Marts]
+    end
+
+    subgraph "Orchestration"
+        Airflow[Apache Airflow]
+    end
+
+    subgraph "Compute Engine"
+        Spark[Apache Spark / Glue / Dataproc]
+    end
+
+    subgraph "Cloud Providers (Multi-Cloud IaC)"
+        AWS[AWS: S3/Glue/IAM]
+        GCP[GCP: GCS/Dataproc/BQ]
+        Azure[Azure: ADLS/Databricks]
+    end
+
+    PG & MY & MG & CS --> NiFi
+    NiFi --> Raw
+    Airflow -. Orchestrates .-> Spark
+    Spark -. Processes .-> Raw
+    Raw --> Bronze
+    Bronze --> Silver
+    Silver --> Gold
+    Spark -. Deployed on .-> AWS & GCP & Azure
 ```
 
-## Engineering Documentation
+## 🚀 Getting Started
 
-*   [Deployment: Local Development](docs/local_setup.md)
-*   [Architecture: Medallion Flow](docs/architecture.md)
-*   [Cloud Infrastructure: AWS](docs/cloud_deployment_aws.md)
-*   [Cloud Infrastructure: GCP](docs/cloud_deployment_gcp.md)
-*   [Cloud Infrastructure: Azure](docs/cloud_deployment_azure.md)
-*   [Data Governance: Model & Star Schema](docs/data_model.md)
-*   [Security & Compliance: GDPR/LGPD](docs/security_compliance.md)
-*   [Operational Excellence: Data Quality](docs/data_quality.md)
-*   [SRE: Operations Runbook](docs/operations_runbook.md)
-*   [Production Hardening Roadmap](docs/production_hardening_checklist.md)
+### Path A: Local Development (Docker)
+This is the fastest way to explore the platform architecture locally.
+1. **Prepare Environment**: `cp .env.example .env`
+2. **Launch Stack**: `make up` (Starts Airflow, NiFi, Spark, and 4 databases).
+3. **Seed Data**: `make init-data` (Simulates ingestion trigger).
+4. **Access Airflow**: Visit `localhost:8080` (admin/admin).
 
-## Key Technical Specifications
+### Path B: Cloud Deployment (IaC)
+To deploy the platform to a production cloud environment, consult the specific deployment guides:
+- [AWS Deployment Guide](docs/cloud_deployment_aws.md)
+- [GCP Deployment Guide](docs/cloud_deployment_gcp.md)
+- [Azure Deployment Guide](docs/cloud_deployment_azure.md)
 
-*   **Idempotency**: All Spark jobs use `dynamic` partition overwrite mode to ensure safe re-runs.
-*   **Schema Enforcement**: Bronze layer implements strict Spark `StructType` validation.
-*   **Security**: SHA-256 PII masking for sensitive fields (Email, Phone) at the Silver layer.
-*   **Scalability**: Native partitioning strategy by `ingestion_date`.
-*   **Quality**: Quarantine pattern for isolating failed records without breaking the pipeline.
+## 🧪 Testing
+The project implements a rigorous testing strategy across two main categories:
+1. **Unit Tests**: Found in `tests/unit/`, validating pure Python logic like Data Quality checks and PII masking.
+2. **Spark Integration Tests**: Found in `tests/spark/`, validating end-to-end Medallion transformations, schema enforcement, and Star Schema joins.
 
-## Getting Started
+**Run all tests:**
+```bash
+make test
+```
 
-Consult the [Local Setup Guide](docs/local_setup.md) to initialize the platform on your development machine.
+## 📜 Technical Specifications
+- **Incremental Processing**: High-watermark tracking in the Bronze layer.
+- **Idempotency**: Dynamic partition overwrite mode ensures safe job re-runs.
+- **Data Quality**: Automated quarantine pattern for isolating corrupted records.
+
+## 📜 License
+Distributed under the MIT License. See `LICENSE` for more information.

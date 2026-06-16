@@ -23,6 +23,10 @@ data/gold/*
 .vscode/
 .idea/
 
+# Test artifacts
+tests/test_*
+tests/temp_*
+
 # Docker/Airflow
 logs/
 airflow_logs/
