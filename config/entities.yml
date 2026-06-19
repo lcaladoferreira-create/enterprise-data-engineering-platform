@@ -1,0 +1,33 @@
+entities:
+  customers:
+    pk: customer_id
+    pii:
+      - email
+      - phone
+      - address
+    critical:
+      - email
+  orders:
+    pk: order_id
+    critical:
+      - customer_id
+      - total_amount
+  products:
+    pk: product_id
+    critical:
+      - name
+      - price
+  order_items:
+    pk: order_item_id
+    critical:
+      - order_id
+      - product_id
+  payments:
+    pk: payment_id
+    critical:
+      - invoice_id
+      - amount
+  invoices:
+    pk: invoice_id
+    critical:
+      - order_id

@@ -33,21 +33,25 @@ def create_gold_star_schema(spark: SparkSession) -> None:
         dim_products.write.mode(config.WRITE_MODE).parquet(f"{config.GOLD_PATH}/dim_products")
 
         # 3. Dimension: dim_dates
-        date_bounds = orders.select(F.min("order_date"), F.max("order_date")).collect()[0]
-        min_date, max_date = date_bounds[0], date_bounds[1]
+        if orders.limit(1).count() > 0:
+            date_bounds = orders.select(F.min("order_date"), F.max("order_date")).collect()[0]
+            min_date, max_date = date_bounds[0], date_bounds[1]
 
-        num_days = (max_date - min_date).days + 1
-        dim_dates = spark.range(0, num_days).select(
-            F.expr(f"date_add('{min_date.date()}', cast(id as int))").alias("date_key")
-        ).select(
-            "date_key",
-            F.year("date_key").alias("year"),
-            F.month("date_key").alias("month"),
-            F.dayofmonth("date_key").alias("day"),
-            F.quarter("date_key").alias("quarter"),
-            F.date_format("date_key", "EEEE").alias("day_name")
-        )
-        dim_dates.write.mode(config.WRITE_MODE).parquet(f"{config.GOLD_PATH}/dim_dates")
+            if min_date and max_date:
+                num_days = (max_date - min_date).days + 1
+                dim_dates = spark.range(0, num_days).select(
+                    F.expr(f"date_add('{min_date.date()}', cast(id as int))").alias("date_key")
+                ).select(
+                    "date_key",
+                    F.year("date_key").alias("year"),
+                    F.month("date_key").alias("month"),
+                    F.dayofmonth("date_key").alias("day"),
+                    F.quarter("date_key").alias("quarter"),
+                    F.date_format("date_key", "EEEE").alias("day_name")
+                )
+                dim_dates.write.mode(config.WRITE_MODE).parquet(f"{config.GOLD_PATH}/dim_dates")
+        else:
+            logger.warning("Orders table is empty. Skipping dim_dates generation.")
 
         # 4. Fact Table: fact_orders
         fact_orders = orders.select(

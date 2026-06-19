@@ -11,23 +11,52 @@ logger = get_logger(__name__)
 def get_high_watermark(entity_name: str) -> str:
     """
     Retrieves the last processed timestamp for an entity.
+    Uses GCS if STATE_BUCKET is configured, otherwise falls back to local.
     """
-    state_file = f"config/state/{entity_name}_high_watermark.txt"
-    if os.path.exists(state_file):
-        with open(state_file, "r") as f:
-            return f.read().strip()
-    return "1970-01-01 00:00:00"
+    filename = f"{entity_name}_high_watermark.txt"
+    default_ts = "1970-01-01 00:00:00"
+
+    try:
+        if config.STATE_BUCKET.startswith("gs://") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+            from google.cloud import storage
+            bucket_name = config.STATE_BUCKET.replace("gs://", "")
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(f"state/{filename}")
+            if blob.exists():
+                return blob.download_as_text().strip()
+        else:
+            state_file = f"config/state/{filename}"
+            if os.path.exists(state_file):
+                with open(state_file, "r") as f:
+                    return f.read().strip()
+    except Exception as e:
+        logger.warning(f"Failed to fetch watermark from GCS, using default: {str(e)}")
+
+    return default_ts
 
 
 def set_high_watermark(entity_name: str, timestamp: str) -> None:
     """
     Saves the latest processed timestamp for an entity.
     """
-    state_dir = "config/state"
-    os.makedirs(state_dir, exist_ok=True)
-    state_file = f"{state_dir}/{entity_name}_high_watermark.txt"
-    with open(state_file, "w") as f:
-        f.write(timestamp)
+    filename = f"{entity_name}_high_watermark.txt"
+
+    try:
+        if config.STATE_BUCKET.startswith("gs://") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+            from google.cloud import storage
+            bucket_name = config.STATE_BUCKET.replace("gs://", "")
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(f"state/{filename}")
+            blob.upload_from_string(timestamp)
+        else:
+            state_dir = "config/state"
+            os.makedirs(state_dir, exist_ok=True)
+            with open(f"{state_dir}/{filename}", "w") as f:
+                f.write(timestamp)
+    except Exception as e:
+        logger.error(f"Failed to save watermark: {str(e)}")
 
 
 def process_bronze_layer(spark: SparkSession, entity_name: str) -> None:
@@ -54,7 +83,8 @@ def process_bronze_layer(spark: SparkSession, entity_name: str) -> None:
         if watermark_col in raw_df.columns:
             raw_df = raw_df.filter(F.col(watermark_col) > F.lit(last_processed_ts))
 
-        if raw_df.count() == 0:
+        # Check if new data exists
+        if raw_df.limit(1).count() == 0:
             logger.info(f"No new records found for {entity_name}.")
             return
 

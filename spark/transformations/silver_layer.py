@@ -39,8 +39,11 @@ def process_silver_layer(
             df = check_nulls(df, critical_cols)
 
             quarantine_df = df.filter(F.col("dq_failed"))
-            if quarantine_df.count() > 0:
-                logger.warning(f"Moving {quarantine_df.count()} records to quarantine for {entity_name}")
+
+            # Use limit(1) to avoid full count if no failures exist
+            if quarantine_df.limit(1).count() > 0:
+                failure_count = quarantine_df.count()
+                logger.warning(f"Moving {failure_count} records to quarantine for {entity_name}")
                 quarantine_df.write.mode("append").parquet(quarantine_dst)
 
             df = df.filter(~F.col("dq_failed")).drop("dq_failed", "dq_reason")

@@ -1,4 +1,5 @@
 import sys
+import yaml
 from pyspark.sql import SparkSession
 from spark.transformations.bronze_layer import process_bronze_layer
 from spark.transformations.silver_layer import process_silver_layer
@@ -6,6 +7,16 @@ from spark.transformations.gold_layer import create_gold_star_schema
 from spark.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def load_entity_config():
+    """Load entity mappings from external YAML."""
+    try:
+        with open("config/entities.yml", "r") as f:
+            return yaml.safe_load(f).get("entities", {})
+    except Exception as e:
+        logger.error(f"Failed to load entity config: {str(e)}")
+        return {}
 
 
 def main():
@@ -18,6 +29,7 @@ def main():
         sys.exit(1)
 
     layer = sys.argv[1]
+    entity_configs = load_entity_config()
 
     spark = SparkSession.builder \
         .appName(f"Enterprise_Data_Pipeline_{layer}") \
@@ -39,39 +51,11 @@ def main():
                 sys.exit(1)
             entity = sys.argv[2]
 
-            # Configuration for entities
-            configs = {
-                "customers": {
-                    "pk": "customer_id",
-                    "pii": ["email", "phone", "address"],
-                    "critical": ["email"]
-                },
-                "orders": {
-                    "pk": "order_id",
-                    "critical": ["customer_id", "total_amount"]
-                },
-                "products": {
-                    "pk": "product_id",
-                    "critical": ["name", "price"]
-                },
-                "order_items": {
-                    "pk": "order_item_id",
-                    "critical": ["order_id", "product_id"]
-                },
-                "payments": {
-                    "pk": "payment_id",
-                    "critical": ["invoice_id", "amount"]
-                },
-                "invoices": {
-                    "pk": "invoice_id",
-                    "critical": ["order_id"]
-                }
-            }
-            cfg = configs.get(entity, {"pk": "id"})
+            cfg = entity_configs.get(entity, {"pk": "id"})
             process_silver_layer(
                 spark,
                 entity,
-                cfg["pk"],
+                cfg.get("pk", "id"),
                 cfg.get("pii"),
                 cfg.get("critical")
             )

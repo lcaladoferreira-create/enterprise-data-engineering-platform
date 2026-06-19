@@ -1,52 +1,34 @@
+import logging
+from datetime import datetime, timedelta, timezone
 from airflow import DAG
+from airflow.operators.python import PythonOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.sensors.filesystem import FileSensor
-from airflow.operators.python import PythonOperator
 from airflow.exceptions import AirflowException
-from airflow.utils.dates import days_ago
-from datetime import timedelta
-import logging
-import glob
-import pandas as pd
 
-# Deployment constants
-SPARK_APP_PATH = '/opt/airflow/spark/jobs/main_job.py'
-ENTITIES = ["customers", "orders", "order_items", "products", "payments", "invoices"]
+# Constants
+# Adjusted for Bitnami Spark container path mapping
+SPARK_APP_PATH = '/opt/bitnami/spark/spark-apps/jobs/main_job.py'
+ENTITIES = ['customers', 'orders', 'products', 'order_items', 'payments', 'invoices']
 
 
 def notify_pipeline_failure(context):
-    """
-    Operational hook for failure notifications.
-    """
-    ti = context.get('task_instance')
-    logging.error(f"CRITICAL: Task {ti.task_id} in DAG {ti.dag_id} failed.")
+    """Placeholder for slack/email notification."""
+    task_instance = context['task_instance']
+    logging.error(f"Task Failed: {task_instance.task_id} in DAG {task_instance.dag_id}")
 
 
 def verify_pipeline_integrity(**kwargs):
     """
-    Reads record counts from silver and gold layers and validates consistency.
-    Raises AirflowException if critical thresholds are not met.
+    Data Quality Audit: Ensures record counts are consistent across Silver and Gold.
     """
-    logging.info("Starting production integrity verification.")
+    from pyspark.sql import SparkSession
 
-    data_root = "/opt/airflow/data"
-
+    spark = SparkSession.builder.appName("Integrity_Check").getOrCreate()
     try:
-        # Example for the core entity: Orders
-        silver_orders_path = f"{data_root}/silver/orders"
-        gold_fact_orders_path = f"{data_root}/gold/fact_orders"
-
-        def get_count(path):
-            files = glob.glob(f"{path}/**/*.parquet", recursive=True)
-            if not files:
-                return 0
-            count = 0
-            for f in files:
-                count += len(pd.read_parquet(f, columns=[]))
-            return count
-
-        silver_count = get_count(silver_orders_path)
-        gold_count = get_count(gold_fact_orders_path)
+        # Check if Silver and Gold orders match within threshold
+        silver_count = spark.read.parquet("/opt/bitnami/spark/data/silver/orders").count()
+        gold_count = spark.read.parquet("/opt/bitnami/spark/data/gold/fact_orders").count()
 
         logging.info(f"Integrity Check: Silver Orders = {silver_count}, Gold Fact Orders = {gold_count}")
 
@@ -80,10 +62,10 @@ with DAG(
     'enterprise_medallion_pipeline',
     default_args=default_args,
     description='End-to-end Enterprise Data Platform Workflow',
-    schedule_interval='@daily',
-    start_date=days_ago(2),
+    schedule='@daily',
+    start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
-    tags=['medallion', 'spark', 'v2'],
+    tags=['medallion', 'spark', 'v3'],
 ) as dag:
 
     # 1. Ingestion Sensors: Verify data landing from NiFi

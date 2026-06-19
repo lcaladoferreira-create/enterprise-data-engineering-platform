@@ -20,6 +20,10 @@ class Config:
     def GOLD_PATH(self):
         return os.getenv("GOLD_PATH", "data/gold")
 
+    @property
+    def STATE_BUCKET(self):
+        return os.getenv("STATE_BUCKET", "local-checkpoint-state")
+
     COMPRESSION_CODEC = "snappy"
     WRITE_MODE = "overwrite"
 
