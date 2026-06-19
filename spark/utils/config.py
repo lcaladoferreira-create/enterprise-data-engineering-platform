@@ -1,9 +1,11 @@
 import os
 
+
 class Config:
     """
     Centralized configuration management for Spark jobs.
     """
+
     @property
     def RAW_PATH(self):
         return os.getenv("RAW_PATH", "data/raw")
@@ -35,5 +37,6 @@ class Config:
     @property
     def SOURCE_SYSTEM(self):
         return os.getenv("SOURCE_SYSTEM", "multi_source_platform")
+
 
 config = Config()

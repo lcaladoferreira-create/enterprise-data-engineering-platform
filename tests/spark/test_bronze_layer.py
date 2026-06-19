@@ -1,9 +1,11 @@
-from spark.transformations.bronze_layer import process_bronze_layer
+import importlib
+import json
 import os
 import shutil
-import json
-import importlib
+
 import spark.utils.config as cfg_module
+from spark.transformations.bronze_layer import process_bronze_layer
+
 
 def test_bronze_schema_enforcement_valid(spark, monkeypatch):
     raw_path = os.path.abspath("tests/test_raw_v")
@@ -27,10 +29,11 @@ def test_bronze_schema_enforcement_valid(spark, monkeypatch):
     importlib.reload(cfg_module)
     process_bronze_layer(spark, entity)
     assert os.path.exists(bronze_path)
-    df = spark.read.parquet(bronze_path)
+    df = spark.read.format("delta").load(bronze_path)
     assert df.count() == 1
     shutil.rmtree(raw_path)
     shutil.rmtree(bronze_path)
+
 
 def test_bronze_null_handling(spark, monkeypatch):
     raw_path = os.path.abspath("tests/test_raw_null")
@@ -53,10 +56,11 @@ def test_bronze_null_handling(spark, monkeypatch):
     monkeypatch.setenv("BRONZE_PATH", bronze_path)
     importlib.reload(cfg_module)
     process_bronze_layer(spark, entity)
-    df = spark.read.parquet(bronze_path)
+    df = spark.read.format("delta").load(bronze_path)
     assert df.collect()[0]["status"] is None
     shutil.rmtree(raw_path)
     shutil.rmtree(bronze_path)
+
 
 def test_bronze_invalid_struct_type(spark, monkeypatch):
     raw_path = os.path.abspath("tests/test_raw_inv")
@@ -80,7 +84,7 @@ def test_bronze_invalid_struct_type(spark, monkeypatch):
     monkeypatch.setenv("BRONZE_PATH", bronze_path)
     importlib.reload(cfg_module)
     process_bronze_layer(spark, entity)
-    df = spark.read.parquet(bronze_path)
+    df = spark.read.format("delta").load(bronze_path)
     assert df.collect()[0]["product_id"] is None
     shutil.rmtree(raw_path)
     shutil.rmtree(bronze_path)

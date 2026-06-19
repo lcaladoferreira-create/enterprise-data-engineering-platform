@@ -9,6 +9,7 @@ entities:
       - email
   orders:
     pk: order_id
+    watermark_col: order_date
     critical:
       - customer_id
       - total_amount
@@ -24,10 +25,12 @@ entities:
       - product_id
   payments:
     pk: payment_id
+    watermark_col: payment_date
     critical:
       - invoice_id
       - amount
   invoices:
     pk: invoice_id
+    watermark_col: invoice_date
     critical:
       - order_id

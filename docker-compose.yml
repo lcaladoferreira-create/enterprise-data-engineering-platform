@@ -3,6 +3,7 @@ services:
   postgres-source:
     image: postgres:15
     container_name: postgres-source
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin_password}
@@ -22,6 +23,7 @@ services:
   mysql-source:
     image: mysql:8.0
     container_name: mysql-source
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-billing_db}
@@ -43,6 +45,7 @@ services:
   mongodb-source:
     image: mongo:6.0
     container_name: mongodb-source
+    restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-admin_password}
@@ -62,6 +65,7 @@ services:
   cassandra-source:
     image: cassandra:4.1
     container_name: cassandra-source
+    restart: unless-stopped
     environment:
       CASSANDRA_CLUSTER_NAME: "EventCluster"
     ports:
@@ -70,9 +74,32 @@ services:
       - ./databases/cassandra:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
-      interval: 15s
+      interval: 20s
+      timeout: 10s
+      retries: 10
+    networks:
+      - data-platform-net
+
+  # --- Ingestion ---
+  nifi:
+    image: apache/nifi:1.23.2
+    container_name: nifi
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    environment:
+      - SINGLE_USER_CREDENTIALS_USERNAME=${NIFI_USER:-admin}
+      - SINGLE_USER_CREDENTIALS_PASSWORD=${NIFI_PASSWORD:-admin_password_123}
+    healthcheck:
+      test: ["CMD", "curl", "-k", "--fail", "https://localhost:8443/nifi"]
+      interval: 30s
       timeout: 10s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2g
     networks:
       - data-platform-net
 
@@ -80,6 +107,7 @@ services:
   airflow-db:
     image: postgres:15
     container_name: airflow-db
+    restart: unless-stopped
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
@@ -93,24 +121,26 @@ services:
       - data-platform-net
 
   airflow-webserver:
-    image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.7.1}
+    image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.9.0}
     container_name: airflow-webserver
+    restart: unless-stopped
     command: webserver
     ports:
       - "8080:8080"
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
-      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-      _PIP_ADDITIONAL_DEPENDENCIES: 'apache-airflow-providers-apache-spark pyspark pymongo cassandra-driver pyyaml google-cloud-storage'
+      _PIP_ADDITIONAL_DEPENDENCIES: 'apache-airflow-providers-apache-spark pyspark==3.4.1 delta-spark==2.4.0 great-expectations==0.18.0 loguru pyyaml google-cloud-storage boto3 azure-storage-blob'
     volumes:
       - ./dags:/opt/airflow/dags
       - ./spark:/opt/airflow/spark
       - ./data:/opt/airflow/data
       - ./logs:/opt/airflow/logs
       - ./config:/opt/airflow/config
+      - ./data_quality:/opt/airflow/data_quality
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 10s
@@ -123,22 +153,29 @@ services:
       - data-platform-net
 
   airflow-scheduler:
-    image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.7.1}
+    image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.9.0}
     container_name: airflow-scheduler
+    restart: unless-stopped
     command: scheduler
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
-      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-      _PIP_ADDITIONAL_DEPENDENCIES: 'apache-airflow-providers-apache-spark pyspark pymongo cassandra-driver pyyaml google-cloud-storage'
+      _PIP_ADDITIONAL_DEPENDENCIES: 'apache-airflow-providers-apache-spark pyspark==3.4.1 delta-spark==2.4.0 great-expectations==0.18.0 loguru pyyaml google-cloud-storage boto3 azure-storage-blob'
     volumes:
       - ./dags:/opt/airflow/dags
       - ./spark:/opt/airflow/spark
       - ./data:/opt/airflow/data
       - ./logs:/opt/airflow/logs
       - ./config:/opt/airflow/config
+      - ./data_quality:/opt/airflow/data_quality
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob']
+      interval: 10s
+      timeout: 10s
+      retries: 5
     depends_on:
       airflow-db:
         condition: service_healthy
@@ -147,14 +184,13 @@ services:
 
   # --- Processing ---
   spark-master:
-    image: bitnami/spark:3.4.1
+    build:
+      context: ./docker/spark
     container_name: spark-master
+    restart: unless-stopped
     user: root
     environment:
       - SPARK_MODE=master
-    entrypoint: >
-      bash -c "pip install pyyaml google-cloud-storage &&
-      /opt/bitnami/scripts/spark/entrypoint.sh /opt/bitnami/scripts/spark/run.sh"
     ports:
       - "7077:7077"
       - "8081:8081"
@@ -162,25 +198,47 @@ services:
       - ./spark:/opt/bitnami/spark/spark-apps
       - ./data:/opt/bitnami/spark/data
       - ./config:/opt/bitnami/spark/config
+      - ./data_quality:/opt/bitnami/spark/data_quality
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2g
     networks:
       - data-platform-net
 
   spark-worker:
-    image: bitnami/spark:3.4.1
+    build:
+      context: ./docker/spark
     container_name: spark-worker
+    restart: unless-stopped
     user: root
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:7077
-    entrypoint: >
-      bash -c "pip install pyyaml google-cloud-storage &&
-      /opt/bitnami/scripts/spark/entrypoint.sh /opt/bitnami/scripts/spark/run.sh"
     volumes:
       - ./spark:/opt/bitnami/spark/spark-apps
       - ./data:/opt/bitnami/spark/data
       - ./config:/opt/bitnami/spark/config
+      - ./data_quality:/opt/bitnami/spark/data_quality
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2g
     depends_on:
-      - spark-master
+      spark-master:
+        condition: service_healthy
     networks:
       - data-platform-net
 

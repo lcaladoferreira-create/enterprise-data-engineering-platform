@@ -1,5 +1,15 @@
 # AWS Cloud Infrastructure - Enterprise Data Platform
 
+terraform {
+  backend "s3" {
+    bucket         = "tfstate-enterprise-de-platform"
+    key            = "prod/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "terraform-locks"
+  }
+}
+
 # 1. Multi-layer Data Lake Storage
 resource "aws_s3_bucket" "medallion_storage" {
   for_each = toset(["raw", "bronze", "silver", "gold"])

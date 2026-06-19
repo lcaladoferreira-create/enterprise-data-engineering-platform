@@ -1,17 +1,20 @@
 import os
-from pyspark.sql import SparkSession, functions as F
-from spark.utils.logger import get_logger
+
+import yaml
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+
 from spark.utils.config import config
 from spark.utils.data_quality import add_audit_metadata, compute_record_hash
+from spark.utils.logging import get_logger
 from spark.utils.schemas import SCHEMAS
 
-logger = get_logger(__name__)
+logger = get_logger("bronze_layer")
 
 
 def get_high_watermark(entity_name: str) -> str:
     """
     Retrieves the last processed timestamp for an entity.
-    Uses GCS if STATE_BUCKET is configured, otherwise falls back to local.
     """
     filename = f"{entity_name}_high_watermark.txt"
     default_ts = "1970-01-01 00:00:00"
@@ -19,6 +22,7 @@ def get_high_watermark(entity_name: str) -> str:
     try:
         if config.STATE_BUCKET.startswith("gs://") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
             from google.cloud import storage
+
             bucket_name = config.STATE_BUCKET.replace("gs://", "")
             client = storage.Client()
             bucket = client.bucket(bucket_name)
@@ -45,6 +49,7 @@ def set_high_watermark(entity_name: str, timestamp: str) -> None:
     try:
         if config.STATE_BUCKET.startswith("gs://") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
             from google.cloud import storage
+
             bucket_name = config.STATE_BUCKET.replace("gs://", "")
             client = storage.Client()
             bucket = client.bucket(bucket_name)
@@ -59,9 +64,20 @@ def set_high_watermark(entity_name: str, timestamp: str) -> None:
         logger.error(f"Failed to save watermark: {str(e)}")
 
 
+def load_entity_config(entity_name: str):
+    """Load config for a specific entity."""
+    try:
+        with open("config/entities.yml", "r") as f:
+            entities = yaml.safe_load(f).get("entities", {})
+            return entities.get(entity_name, {})
+    except Exception as e:
+        logger.error(f"Failed to load entity config for {entity_name}: {str(e)}")
+        return {}
+
+
 def process_bronze_layer(spark: SparkSession, entity_name: str) -> None:
     """
-    Bronze Layer: Incremental ingestion of raw JSON into Parquet.
+    Bronze Layer: Incremental ingestion of raw JSON into Delta format.
     """
     try:
         logger.info(f"Starting Bronze processing for: {entity_name}")
@@ -73,15 +89,18 @@ def process_bronze_layer(spark: SparkSession, entity_name: str) -> None:
         if not entity_schema:
             raise ValueError(f"Schema not found for entity: {entity_name}")
 
+        entity_cfg = load_entity_config(entity_name)
+        watermark_col = entity_cfg.get("watermark_col", "updated_at")
+
         last_processed_ts = get_high_watermark(entity_name)
         logger.info(f"Incremental Load - High-watermark for {entity_name}: {last_processed_ts}")
 
         raw_df = spark.read.schema(entity_schema).json(raw_source)
 
-        watermark_col = "order_date" if "order_date" in raw_df.columns else "invoice_date"
-
         if watermark_col in raw_df.columns:
             raw_df = raw_df.filter(F.col(watermark_col) > F.lit(last_processed_ts))
+        else:
+            logger.warning(f"Watermark column '{watermark_col}' not found for {entity_name}. Skipping incremental filter.")
 
         # Check if new data exists
         if raw_df.limit(1).count() == 0:
@@ -97,7 +116,10 @@ def process_bronze_layer(spark: SparkSession, entity_name: str) -> None:
         else:
             new_watermark = None
 
-        df.write.mode("append").partitionBy("ingestion_date").parquet(bronze_dest)
+        logger.info(f"Writing to Delta at {bronze_dest}")
+        df.write.format("delta").mode("append").partitionBy("ingestion_date").option("delta.enableChangeDataFeed", "true").save(
+            bronze_dest
+        )
 
         if new_watermark:
             set_high_watermark(entity_name, str(new_watermark))
@@ -105,5 +127,5 @@ def process_bronze_layer(spark: SparkSession, entity_name: str) -> None:
         logger.info(f"Bronze layer load complete for {entity_name}")
 
     except Exception as e:
-        logger.error(f"Bronze layer failure for {entity_name}: {str(e)}", exc_info=True)
+        logger.error(f"Bronze layer failure for {entity_name}: {str(e)}")
         raise

@@ -1,6 +1,7 @@
 import logging
 import sys
 
+
 def get_logger(name: str):
     """
     Configures and returns a structured logger for the Spark application.

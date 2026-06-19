@@ -1,0 +1,40 @@
+{
+  "data_asset_type": null,
+  "expectation_suite_name": "silver_suite",
+  "expectations": [
+    {
+      "expectation_type": "expect_compound_columns_to_be_unique",
+      "kwargs": {
+        "column_list": ["id", "processed_at"]
+      },
+      "meta": {}
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "email",
+        "regex": "^[a-f0-9]{64}$",
+        "mostly": 1.0
+      },
+      "meta": {
+        "description": "Email must be masked using SHA-256 (64 hex characters)"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "processed_at",
+        "min_value": {
+          "$parameter": "now_minus_24h"
+        }
+      },
+      "meta": {
+        "description": "Data freshness check: max 24h lag"
+      }
+    }
+  ],
+  "ge_cloud_id": null,
+  "meta": {
+    "great_expectations_version": "0.18.0"
+  }
+}
